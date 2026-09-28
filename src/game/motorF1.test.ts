@@ -4,6 +4,8 @@ import { CARS } from './cars'
 import {
   CAMADAS,
   CAMADA_DO_ALIVIO,
+  ESCAPAMENTO,
+  GIRO_DEPOIS_DA_TROCA,
   HISTERESE,
   MOTOR_PADRAO,
   RPM_DA_LARGADA,
@@ -12,7 +14,10 @@ import {
   camadasDaVoz,
   marchasDoMotor,
   pesosDasCamadas,
+  pisoDaVoz,
+  profundidadeDaVoz,
   rotacaoF1,
+  rpmDaVoz,
   taxaDaCamada,
   trocasDoMotor,
   volumeDoMotor,
@@ -20,6 +25,7 @@ import {
   type EspecificacaoDoMotor,
 } from './motorF1'
 import { DIFFICULTIES, rulesFor } from './rules'
+import { GIRO_DA_TROCA_AUTOMATICA, NUMERO_DE_MARCHAS, QUEDAS_DO_CAMBIO, velocidadeDaMarcha } from './simulation'
 
 const TODAS = Object.values(VOZES)
 
@@ -220,5 +226,79 @@ describe('voz padrão: o V10 da MP4-16', () => {
     expect(rotacaoF1(-5, 0).rpm).toBe(RPM_DA_LARGADA)
     expect(rotacaoF1(0.5, 99).marcha).toBeLessThanOrEqual(6)
     expect(RPM_DA_TROCA).toBe(MOTOR_PADRAO.troca)
+  })
+})
+
+describe.each(TODAS)('o motor segue o câmbio da física: $nome', (voz) => {
+  it('o corte da física é o corte da voz, e o giro sobe com o giro da física', () => {
+    expect(rpmDaVoz(voz, 3, 1)).toBeCloseTo(voz.corte, 6)
+    let anterior = 0
+    for (let giro = 0; giro <= 1; giro += 0.01) {
+      const rpm = rpmDaVoz(voz, 3, giro)
+      expect(rpm).toBeGreaterThanOrEqual(anterior)
+      expect(rpm).toBeLessThanOrEqual(voz.corte)
+      anterior = rpm
+    }
+  })
+
+  it('na primeira a embreagem patina: o motor não cai abaixo do giro da largada', () => {
+    for (let giro = 0; giro <= 1; giro += 0.05) expect(rpmDaVoz(voz, 0, giro)).toBeGreaterThanOrEqual(voz.largada)
+  })
+
+  it('cada troca feita no ponto cai dentro da faixa em que a gravação soa natural', () => {
+    // Da janela ao corte, em toda marcha: o giro que sobra depois da troca
+    // nunca passa abaixo do piso da voz, onde a camada que domina já estaria
+    // esticada mais de um quinto.
+    for (let marcha = 0; marcha < NUMERO_DE_MARCHAS - 1; marcha += 1) {
+      for (const antes of [0.8, 0.9, GIRO_DA_TROCA_AUTOMATICA, 1]) {
+        const depois = antes * QUEDAS_DO_CAMBIO[marcha]
+        const rpm = rpmDaVoz(voz, marcha + 1, depois)
+        expect(rpm, `${marcha + 1}ª para ${marcha + 2}ª a ${antes}`).toBeGreaterThanOrEqual(pisoDaVoz(voz) - 1e-6)
+        const pesos = pesosDasCamadas(rpm, 1, voz)
+        voz.camadas.forEach((camada, i) => {
+          if (pesos[i] >= 0.5) expect(Math.abs(taxaDaCamada(camada, rpm) - 1)).toBeLessThan(0.2)
+        })
+      }
+    }
+  })
+
+  it('a queda na troca é a da física, ou o máximo dela que a gravação aguenta', () => {
+    const profundidade = profundidadeDaVoz(voz)
+    expect(profundidade).toBeGreaterThan(0.5)
+    expect(profundidade).toBeLessThanOrEqual(1)
+    // Na voz que aguenta, o motor cai exatamente o que a marcha cai.
+    if (profundidade === 1) expect(rpmDaVoz(voz, 2, 0.8) / rpmDaVoz(voz, 1, 1)).toBeCloseTo(0.8, 6)
+    expect(rpmDaVoz(voz, 1, GIRO_DEPOIS_DA_TROCA)).toBeGreaterThanOrEqual(pisoDaVoz(voz) - 1e-6)
+  })
+
+  it('numa marcha longa demais o motor se arrasta abaixo do piso, mas não some', () => {
+    expect(rpmDaVoz(voz, 6, 0.1)).toBeLessThan(pisoDaVoz(voz))
+    expect(rpmDaVoz(voz, 6, 0)).toBeGreaterThanOrEqual(pisoDaVoz(voz) * 0.8 - 1e-6)
+  })
+
+  it('o escapamento de cada voz estala sem estourar', () => {
+    const { tom, forca } = ESCAPAMENTO[voz.id]
+    expect(tom).toBeGreaterThan(500)
+    expect(tom).toBeLessThan(4_000)
+    // O estalo mais forte, somado ao baque, pelo volume geral, fica longe do teto da saída.
+    expect(forca * 1.7 * MASTER_GAIN).toBeLessThan(0.5)
+  })
+
+  it('aguenta valores estranhos', () => {
+    expect(rpmDaVoz(voz, 3, Number.NaN)).toBeGreaterThan(0)
+    expect(rpmDaVoz(voz, Number.NaN, 0.5)).toBeGreaterThanOrEqual(voz.largada)
+    expect(rpmDaVoz(voz, 3, 5)).toBeCloseTo(voz.corte, 6)
+  })
+})
+
+describe('câmbio da física e voz padrão', () => {
+  it('o cruzeiro de todos os níveis cai na quinta, no grito de uns dezessete mil', () => {
+    for (const nivel of DIFFICULTIES) {
+      const regras = rulesFor(nivel)
+      const giro = regras.cruiseSpeed / velocidadeDaMarcha(regras, 4)
+      const rpm = rpmDaVoz(MOTOR_PADRAO, 4, giro)
+      expect(rpm, nivel).toBeGreaterThan(16_800)
+      expect(rpm, nivel).toBeLessThan(18_000)
+    }
   })
 })

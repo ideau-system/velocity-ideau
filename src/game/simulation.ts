@@ -15,7 +15,28 @@ import {
 // o desenho, a simulação e o servidor nunca divergirem.
 export { LATERAL_LIMIT, OFF_ROAD_LIMIT } from './track.js'
 
-export type RaceInput = { left: boolean; right: boolean; boost: boolean }
+export type RaceInput = {
+  left: boolean
+  right: boolean
+  boost: boolean
+  /**
+   * Pé no acelerador. Ausente vale pé no fundo: é o acelerador automático do
+   * toque, o dos pilotos de referência e o de toda volta gravada antes de o
+   * carro ter pedal.
+   */
+  throttle?: boolean
+  /** Pé no freio. Vence o acelerador e o boost. */
+  brake?: boolean
+  /** Borboleta de subir marcha. Vale uma vez, no quadro em que chega. */
+  shiftUp?: boolean
+  /** Borboleta de reduzir. Vale uma vez, no quadro em que chega. */
+  shiftDown?: boolean
+  /**
+   * Câmbio manual. Ausente, o câmbio troca sozinho no ponto certo — e nunca
+   * rende troca perfeita, que é o prêmio de quem troca na mão.
+   */
+  manual?: boolean
+}
 
 export type RaceState = {
   /** Distância percorrida no circuito, em metros. */
@@ -120,6 +141,28 @@ export type RaceState = {
   ladoDaCarga: number
   /** Segundos desde que o volante deixou de mirar a curva, com carga guardada. */
   semCarga: number
+  /** Marcha engatada: 0 é a primeira, até `NUMERO_DE_MARCHAS - 1`. */
+  marcha: number
+  /** Giro dentro da marcha, de 0 a 1: em 1 o motor bate no corte. */
+  giro: number
+  /** Segundos seguidos no limitador de giro, sem trocar. */
+  noCorte: number
+  /**
+   * Quanto o carro está ganhando de velocidade, em km/h por segundo, com um
+   * instante de suavização. É o que diz quanto falta para o corte, e portanto
+   * quando a janela da troca perfeita abre.
+   */
+  puxada: number
+  /** A janela da troca perfeita está aberta: subir agora rende o impulso. */
+  janelaDeTroca: boolean
+  /** Trocas perfeitas seguidas, desde a última troca fora da janela ou redução. */
+  trocasPerfeitas: number
+  /** O câmbio está no manual neste passo. */
+  manual: boolean
+  /** Pé no acelerador neste passo: o pedal, ou o boost, que também acelera. */
+  acelerando: boolean
+  /** Pé no freio neste passo. */
+  freando: boolean
   /**
    * Regras da corrida, fixadas na largada.
    *
@@ -146,7 +189,24 @@ export type RaceEvent =
   | { type: 'miniTurbo'; nivel: number }
   /** Passou rente a um obstáculo de batida sem tocar. */
   | { type: 'raspao'; obstacleId: number }
+  /**
+   * Troca de marcha, do câmbio automático ou da mão do piloto. `sequencia` é
+   * quantas trocas perfeitas vieram seguidas, contando esta.
+   */
+  | { type: 'troca'; de: number; para: number; qualidade: QualidadeDaTroca; sequencia: number }
+  /** Redução recusada: na marcha de baixo, o motor passaria do corte. */
+  | { type: 'reducaoNegada' }
   | { type: 'finish' }
+
+/**
+ * Como foi a troca.
+ *
+ * `perfeita` é a subida dentro da janela, a única que rende impulso; `tarde`, a
+ * que veio depois de o motor bater no corte; `cedo`, a que derrubou o giro
+ * abaixo da faixa de força; `boa`, qualquer outra subida. As reduções e as
+ * trocas do câmbio automático não são julgadas.
+ */
+export type QualidadeDaTroca = 'perfeita' | 'boa' | 'cedo' | 'tarde' | 'reducao' | 'automatica'
 
 /** Maior passo de simulação aceito, protege contra abas em segundo plano. */
 export const MAX_STEP_SECONDS = 0.05
@@ -390,6 +450,15 @@ export function createRaceState(difficulty: Difficulty = 'normal', turbo = 1): R
     nivelCarga: 0,
     ladoDaCarga: 0,
     semCarga: 0,
+    marcha: 0,
+    giro: 0,
+    noCorte: 0,
+    puxada: 0,
+    janelaDeTroca: false,
+    trocasPerfeitas: 0,
+    manual: false,
+    acelerando: true,
+    freando: false,
   }
 }
 
@@ -441,9 +510,13 @@ function resetar(state: RaceState) {
   state.strikes = 0
   state.offTrack = 0
   state.onWall = false
-  // O reset é a punição inteira: leva junto o turbo, a carga e a sequência.
+  // O reset é a punição inteira: leva junto o turbo, a carga e as sequências.
   state.impulso = 0
   state.sequencia = 0
+  state.trocasPerfeitas = 0
+  state.noCorte = 0
+  state.janelaDeTroca = false
+  state.puxada = 0
   perderCarga(state)
   for (const obstacle of state.rules.obstacles) {
     const delta = obstacle.distance - state.progress
@@ -657,9 +730,13 @@ export function nivelDaCarga(carga: number) {
   return nivel
 }
 
-/** Se o motor está mandando a força do boost: pelo boost ou por um impulso em curso. */
+/**
+ * Se o motor está mandando a força do boost: pelo boost ou por um impulso em
+ * curso — este, só com o pé no acelerador. Quem tira o pé no meio do turbo o
+ * joga fora.
+ */
 export function motorForte(state: RaceState) {
-  return state.boosting || state.impulso > 0
+  return state.boosting || (state.impulso > 0 && state.acelerando)
 }
 
 /** Joga fora a carga do mini-turbo, sem disparar. */
@@ -696,10 +773,233 @@ export const WALL_PENALTY_SHARE = 0.8
  */
 export const WALL_SCRUB = 70
 
+// ---------------------------------------------------------------------------
+// Pedais e câmbio
+// ---------------------------------------------------------------------------
+
+/**
+ * Quanto o carro perde com o pé fora, sem frear, em km/h por segundo: arrasto
+ * e freio-motor. A parcela do ar cresce com o quadrado da velocidade, medida
+ * contra o cruzeiro.
+ *
+ * Um Fórmula 1 que tira o pé a 300 km/h desacelera quase 1 g só de arrasto.
+ * Aqui é menos — tirar o pé é ferramenta de curva, não freio —, mas o bastante
+ * para o carro sentir: em cruzeiro, uns 22 km/h a cada segundo sem acelerar.
+ */
+export const ARRASTO = 8
+export const ARRASTO_AERODINAMICO = 14
+
+/**
+ * Frenagem, em km/h por segundo, e o reforço da asa em alta.
+ *
+ * O freio é o comando mais forte do carro, como num Fórmula 1 de verdade, que
+ * freia mais do que acelera: do cruzeiro a 150 km/h em menos de um segundo.
+ * É o que deixa entrar num grampo por dentro sem ir para o muro.
+ */
+export const FRENAGEM = 95
+export const FRENAGEM_AERODINAMICA = 40
+
+/** Marchas do câmbio: sete, como nos carros da era do V10 e do V8. */
+export const NUMERO_DE_MARCHAS = 7
+
+/**
+ * Queda de giro em cada troca para cima, da primeira para a segunda em diante.
+ *
+ * Câmbio de corrida: marchas próximas, e mais próximas quanto mais alta a
+ * marcha. Da primeira para a segunda o motor cai quase um terço; na última
+ * troca, um décimo. O som do motor cai exatamente o que a física cai.
+ */
+export const QUEDAS_DO_CAMBIO = [0.72, 0.78, 0.82, 0.855, 0.88, 0.9] as const
+
+/**
+ * Velocidade de cada marcha no corte de giro, em fração do teto do nível.
+ *
+ * A última leva o carro ao teto — o boost com o vácuo inteiro —, e as outras
+ * saem das quedas, de cima para baixo. O cruzeiro cai na quinta, com o motor a
+ * mais de nove décimos do corte: o grito de uma reta. Só o boost chega à sétima.
+ */
+export const ALCANCE_DAS_MARCHAS: readonly number[] = QUEDAS_DO_CAMBIO.reduceRight<number[]>(
+  (alcances, queda) => [alcances[0] * queda, ...alcances],
+  [1],
+)
+
+/** Velocidade, em km/h, em que o motor bate no corte numa marcha. */
+export function velocidadeDaMarcha(rules: RaceRules, marcha: number) {
+  const indice = clamp(Math.round(Number.isFinite(marcha) ? marcha : 0), 0, NUMERO_DE_MARCHAS - 1)
+  return speedForState(false, 0, true, rules, 1) * ALCANCE_DAS_MARCHAS[indice]
+}
+
+/** Giro em que o câmbio automático sobe de marcha: logo antes do corte. */
+export const GIRO_DA_TROCA_AUTOMATICA = 0.975
+
+/**
+ * Giro que a marcha de baixo teria, abaixo do qual o automático reduz.
+ *
+ * Fica abaixo do giro da subida: senão o câmbio subiria e desceria a cada
+ * quadro com o carro andando em cima de uma troca.
+ */
+export const GIRO_DA_REDUCAO_AUTOMATICA = 0.88
+
+/**
+ * Giro a partir do qual o motor entrega a força toda.
+ *
+ * É onde a subida perfeita da primeira para a segunda deixa o motor: quem
+ * troca na janela nunca cai abaixo dele, e quem troca antes cai.
+ */
+export const GIRO_CHEIO = 0.62
+
+/**
+ * Força do motor muito abaixo da faixa, em fração da cheia.
+ *
+ * Numa marcha longa demais o motor se arrasta — é o que a troca adiantada
+ * custa —, mas a embreagem patina antes de ele morrer: o carro nunca para.
+ */
+export const FORCA_MINIMA = 0.35
+
+/**
+ * Força que o motor entrega numa marcha e num giro, em fração da cheia.
+ *
+ * Cai com o quadrado da distância para a faixa: um pouco abaixo dela quase
+ * não se sente, e a marcha muito longa se arrasta. Na primeira a embreagem
+ * patina e a força é toda: é a marcha de sair parado.
+ */
+export function forcaDaMarcha(marcha: number, giro: number) {
+  if (marcha <= 0 || giro >= GIRO_CHEIO) return 1
+  const faixa = clamp(giro / GIRO_CHEIO, 0, 1)
+  return FORCA_MINIMA + (1 - FORCA_MINIMA) * faixa * faixa
+}
+
+/**
+ * Quanto antes do corte a janela da troca perfeita abre, em segundos.
+ *
+ * Em tempo, e não em giro, de propósito: na primeira o carro atravessa o alto
+ * do giro num piscar, e na sexta leva meio segundo. Em giro, a janela da
+ * primeira seria impossível e a da sexta, de graça. Em tempo, é a mesma troca
+ * em toda marcha — e é quando as luzes do volante piscam.
+ */
+export const ANTECIPACAO_DA_TROCA = 0.25
+
+/** Quanto tempo batendo no corte ainda conta como troca perfeita, em segundos. */
+export const TOLERANCIA_DO_CORTE = 0.15
+
+/** Abaixo deste giro a janela nunca abre, por mais depressa que o carro ganhe velocidade. */
+export const GIRO_MINIMO_DA_JANELA = 0.8
+
+/**
+ * Ganho mínimo de velocidade, em km/h por segundo, para a janela abrir.
+ *
+ * A troca perfeita é prêmio de quem está puxando a marcha até o fim. Em
+ * cruzeiro o carro não ganha nada, e subir e descer de marcha ali não rende
+ * impulso nenhum — senão o câmbio virava uma fábrica de boost.
+ */
+export const PUXADA_MINIMA = 4
+
+/** Suavização da puxada, em segundos: um instante, para a janela não piscar. */
+const PUXADA_TAU = 0.08
+
+/** Abaixo deste giro, subir de marcha acelerando é adiantado: derruba o motor abaixo da força. */
+export const GIRO_CEDO = 0.8
+
+/**
+ * Segundos de impulso que a troca perfeita paga, e o máximo que trocas
+ * seguidas acumulam.
+ *
+ * É o mesmo turbo da largada e do mini-turbo: tração de boost rumo à
+ * velocidade do boost, sem gastar a barra, e sem passar do teto do nível.
+ * Menos que o mini-turbo de nível um, porque se troca de marcha muito mais
+ * vezes do que se faz curva; mas quem acerta a subida inteira de uma largada
+ * sai dela com mais de um segundo de turbo.
+ */
+export const IMPULSO_DA_TROCA = 0.4
+export const IMPULSO_DA_TROCA_MAXIMO = 1.2
+
+/** Recalcula o giro na marcha engatada. */
+function atualizarGiro(state: RaceState) {
+  state.giro = clamp(state.speed / velocidadeDaMarcha(state.rules, state.marcha), 0, 1)
+}
+
+/** Sobe uma marcha pela mão do piloto, e julga a troca. */
+function subirMarcha(state: RaceState, events: RaceEvent[]) {
+  if (state.marcha >= NUMERO_DE_MARCHAS - 1) return
+  const de = state.marcha
+  // Parado no reset ou com o motor afogado não há o que puxar.
+  const parado = state.resetting > 0 || state.afogado > 0
+  const qualidade: QualidadeDaTroca =
+    !parado && state.janelaDeTroca
+      ? 'perfeita'
+      : state.noCorte > TOLERANCIA_DO_CORTE
+        ? 'tarde'
+        : state.acelerando && state.giro < GIRO_CEDO
+          ? 'cedo'
+          : 'boa'
+  state.marcha += 1
+  state.noCorte = 0
+  state.janelaDeTroca = false
+  atualizarGiro(state)
+  if (qualidade === 'perfeita') {
+    state.trocasPerfeitas += 1
+    state.impulso = Math.max(state.impulso, Math.min(state.impulso + IMPULSO_DA_TROCA, IMPULSO_DA_TROCA_MAXIMO))
+  } else {
+    state.trocasPerfeitas = 0
+  }
+  events.push({ type: 'troca', de, para: state.marcha, qualidade, sequencia: state.trocasPerfeitas })
+}
+
+/**
+ * Reduz uma marcha pela mão do piloto — se o motor aguentar o giro da de baixo.
+ *
+ * O câmbio de Fórmula 1 recusa a redução que passaria do corte, e aqui também:
+ * a borboleta apertada cedo demais na frenagem não faz nada, e o piloto aperta
+ * de novo quando a velocidade cair.
+ */
+function reduzirMarcha(state: RaceState, events: RaceEvent[]) {
+  if (state.marcha <= 0) return
+  if (state.speed > velocidadeDaMarcha(state.rules, state.marcha - 1)) {
+    events.push({ type: 'reducaoNegada' })
+    return
+  }
+  const de = state.marcha
+  state.marcha -= 1
+  state.noCorte = 0
+  state.janelaDeTroca = false
+  state.trocasPerfeitas = 0
+  atualizarGiro(state)
+  events.push({ type: 'troca', de, para: state.marcha, qualidade: 'reducao', sequencia: 0 })
+}
+
+/**
+ * O câmbio automático: sobe logo antes do corte e reduz quando o giro cai
+ * demais, uma marcha por passo.
+ *
+ * Nunca deixa o motor bater no corte nem sair da faixa de força, e a física
+ * não aplica a força da marcha a quem está no automático: com ele, o carro
+ * anda exatamente o que andava antes de ter câmbio. É o que mantém valendo os
+ * tempos de referência, as medalhas e o piso que o servidor usa.
+ */
+function cambioAutomatico(state: RaceState, events: RaceEvent[]) {
+  const de = state.marcha
+  if (state.marcha < NUMERO_DE_MARCHAS - 1 && state.giro >= GIRO_DA_TROCA_AUTOMATICA) {
+    state.marcha += 1
+  } else if (
+    state.marcha > 0 &&
+    state.speed < velocidadeDaMarcha(state.rules, state.marcha - 1) * GIRO_DA_REDUCAO_AUTOMATICA
+  ) {
+    state.marcha -= 1
+  } else {
+    return
+  }
+  state.noCorte = 0
+  state.trocasPerfeitas = 0
+  atualizarGiro(state)
+  events.push({ type: 'troca', de, para: state.marcha, qualidade: 'automatica', sequencia: 0 })
+}
+
 /**
  * Avança a simulação em `dt` segundos e devolve os eventos ocorridos no passo.
  *
- * A aceleração é automática: o piloto controla apenas direção e boost.
+ * Sem pedal informado, o acelerador fica no fundo e o câmbio troca sozinho:
+ * é a corrida de quem só controla direção e boost, como sempre foi. Com o
+ * pedal e o câmbio manual, o piloto acelera, freia e troca de marcha.
  */
 export function stepRace(
   state: RaceState,
@@ -709,6 +1009,20 @@ export function stepRace(
 ): RaceEvent[] {
   const events: RaceEvent[] = []
   if (state.finished) return events
+
+  // O câmbio e os pedais. As borboletas valem uma vez por chamada, antes do
+  // passo — é o quadro em que o dedo apertou —, com o giro e a janela que o
+  // piloto via na tela naquele instante. No automático, elas não fazem nada.
+  const manual = input.manual === true
+  state.manual = manual
+  if (manual) {
+    if (input.shiftUp) subirMarcha(state, events)
+    if (input.shiftDown) reduzirMarcha(state, events)
+  }
+  const freio = input.brake === true
+  // O boost também acelera: apertá-lo sem o pedal é pedir tudo.
+  state.freando = freio
+  state.acelerando = ((input.throttle ?? true) || input.boost) && !freio
 
   const step = Math.min(Math.max(0, dt), MAX_STEP_SECONDS)
   if (step === 0) return events
@@ -926,7 +1240,13 @@ export function stepRace(
     // não drena nada, e o carro já tem a força dele.
     if (state.boostLocked && state.boost >= BOOST_UNLOCK) state.boostLocked = false
     state.boosting =
-      input.boost && state.boost > 0 && !state.boostLocked && !state.offRoad && state.penalty <= 0 && state.impulso <= 0
+      input.boost &&
+      !freio &&
+      state.boost > 0 &&
+      !state.boostLocked &&
+      !state.offRoad &&
+      state.penalty <= 0 &&
+      state.impulso <= 0
     state.boost = clamp(
       state.boost + (state.boosting ? -state.rules.boostDrain : state.rules.boostRecharge) * h,
       0,
@@ -936,19 +1256,57 @@ export function stepRace(
     state.penalty = Math.max(0, state.penalty - h)
 
     const alvo = targetSpeedFor(state)
-    if (alvo > state.speed) {
-      // Tração: forte na saída, cedendo perto do teto.
+    const antes = state.speed
+    // A queda rumo a um alvo mais baixo — a grama, a penalidade — vale com
+    // qualquer pedal. É exponencial, que é a forma certa para arrasto e
+    // frenagem, e tem solução fechada, então não depende do tamanho do passo.
+    const taxaDeQueda = state.penalty > 0 ? IMPACT_DECELERATION : DECELERATION_RATE
+    const queda = alvo < state.speed ? state.speed + (alvo - state.speed) * (1 - Math.exp(-h * taxaDeQueda)) : state.speed
+    const noAr = state.speed / state.rules.cruiseSpeed
+    const tetoDaMarcha = velocidadeDaMarcha(state.rules, state.marcha)
+    if (state.freando) {
+      const frenagem = (FRENAGEM + FRENAGEM_AERODINAMICA * noAr * noAr) * state.rules.turbo
+      state.speed = Math.min(queda, Math.max(0, state.speed - frenagem * h))
+    } else if (!state.acelerando) {
+      const arrasto = (ARRASTO + ARRASTO_AERODINAMICO * noAr * noAr) * state.rules.turbo
+      state.speed = Math.min(queda, Math.max(0, state.speed - arrasto * h))
+    } else if (alvo > state.speed) {
+      // Tração: forte na saída, cedendo perto do teto. No manual, a marcha
+      // manda: fora da faixa o motor se arrasta, e no corte ele não passa.
       const fracao = state.speed / Math.max(1, alvo)
-      const tracao = ACCELERATION_PEAK * (motorForte(state) ? BOOST_TRACTION : 1) * state.rules.turbo
-      state.speed = Math.min(alvo, state.speed + tracao * (1 - Math.pow(fracao, ACCELERATION_SHAPE)) * h)
+      const forca = manual ? forcaDaMarcha(state.marcha, state.giro) : 1
+      const tracao = ACCELERATION_PEAK * (motorForte(state) ? BOOST_TRACTION : 1) * state.rules.turbo * forca
+      const nova = Math.min(alvo, state.speed + tracao * (1 - Math.pow(fracao, ACCELERATION_SHAPE)) * h)
+      state.speed = manual ? Math.min(nova, Math.max(state.speed, tetoDaMarcha)) : nova
     } else {
-      // A perda é exponencial, que é a forma certa para arrasto e frenagem —
-      // e tem solução fechada, então não depende do tamanho do passo.
-      const taxa = state.penalty > 0 ? IMPACT_DECELERATION : DECELERATION_RATE
-      state.speed += (alvo - state.speed) * (1 - Math.exp(-h * taxa))
+      state.speed = queda
     }
     // E o pneu que escapa esfrega: a curva também cobra velocidade, aos poucos.
     state.speed = Math.max(0, state.speed - CORNER_SCRUB * escapa * h)
+
+    // O giro depois do passo, e o que o câmbio faz com ele.
+    atualizarGiro(state)
+    state.puxada += ((state.speed - antes) / h - state.puxada) * (1 - Math.exp(-h / PUXADA_TAU))
+    if (manual) {
+      // No corte: acelerando, encostado no fim da marcha, com a pista pedindo
+      // mais. A folga cobre o que a curva esfrega entre dois passos.
+      const noLimitador =
+        state.acelerando && state.marcha < NUMERO_DE_MARCHAS - 1 && state.speed >= tetoDaMarcha - 0.5 && alvo > tetoDaMarcha
+      state.noCorte = noLimitador ? state.noCorte + h : 0
+      const podeSubir = state.acelerando && state.marcha < NUMERO_DE_MARCHAS - 1 && !state.offRoad && state.penalty <= 0
+      if (!podeSubir) state.janelaDeTroca = false
+      else if (state.noCorte > 0) state.janelaDeTroca = state.noCorte <= TOLERANCIA_DO_CORTE
+      else {
+        state.janelaDeTroca =
+          state.giro >= GIRO_MINIMO_DA_JANELA &&
+          state.puxada > PUXADA_MINIMA &&
+          (tetoDaMarcha - state.speed) / state.puxada <= ANTECIPACAO_DA_TROCA
+      }
+    } else {
+      state.noCorte = 0
+      state.janelaDeTroca = false
+      cambioAutomatico(state, events)
+    }
 
     const avanco = Math.min(state.speed * state.lineFactor, Math.max(state.speed, tetoDeAvanco))
     state.progress = Math.min(TRACK_LENGTH, state.progress + (avanco / 3.6) * h)
@@ -1001,8 +1359,13 @@ export function advanceRace(
   // mesma sequência de um aparelho a 20 quadros por segundo.
   const pedacos = Math.ceil(quadro / MAX_STEP_SECONDS - 1e-9)
   const passo = quadro / pedacos
+  // A borboleta é um toque, e não um comando segurado: troca uma marcha só,
+  // no primeiro pedaço, por mais pedaços que o quadro longo tenha.
+  const semTroca = input.shiftUp || input.shiftDown ? { ...input, shiftUp: false, shiftDown: false } : input
   const events: RaceEvent[] = []
-  for (let i = 0; i < pedacos && !state.finished; i++) events.push(...stepRace(state, input, passo, context))
+  for (let i = 0; i < pedacos && !state.finished; i++) {
+    events.push(...stepRace(state, i === 0 ? input : semTroca, passo, context))
+  }
   return events
 }
 

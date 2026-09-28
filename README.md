@@ -4,8 +4,69 @@ Protótipo jogável do plano em `PLANO_DESENVOLVIMENTO.md`: corrida offline, lob
 
 ## Como se dirige
 
-A aceleração é automática. O piloto controla **direção** e **boost** — e há três
-coisas disputando esse único comando.
+O piloto controla **direção**, **acelerador**, **freio**, **câmbio** e **boost**.
+No teclado, W ou ↑ acelera, S ou ↓ freia, A/D ou ←/→ viram, E sobe e Q reduz a
+marcha, e o espaço é o boost. No toque o pé fica no fundo sozinho — os dois
+polegares já têm a direção e o boost —, e o freio mora ao lado do boost.
+
+**Pedais e câmbio** (`src/game/simulation.ts`, testados em `src/game/cambio.test.ts`):
+
+- **Sete marchas**, próximas como num câmbio de corrida: da primeira para a
+  segunda o giro cai 28%; da sexta para a sétima, 10%. A última chega ao teto
+  do nível; o cruzeiro cai na quinta, a mais de nove décimos do corte, e só o
+  boost vai à sétima.
+- **Câmbio automático**, o padrão no toque: sobe logo antes do corte e reduz
+  quando o giro cai demais. Com ele a física é *exatamente* a de antes do
+  câmbio — os tempos de referência, as medalhas e o piso de tempo do servidor
+  continuam valendo, e as voltas gravadas antes continuam sendo refeitas iguais.
+- **Câmbio manual**, o padrão no teclado (o botão MANUAL/AUTO ao lado da marcha
+  troca, e tocar numa borboleta no automático já passa para o manual). As
+  quinze luzes do volante — verdes, vermelhas e azuis — sobem com o giro; um
+  quarto de segundo antes do corte todas piscam em roxo: é a **janela da troca
+  perfeita**, que fica aberta até 0,15 s depois de o motor bater no corte.
+  Subir nela rende 0,4 s de impulso — a mesma força do boost, sem gastar a
+  barra —, e trocas perfeitas seguidas acumulam até 1,2 s. Trocar **tarde**
+  deixa o carro parado no corte; trocar **cedo** derruba o giro abaixo da faixa
+  de força, e o motor se arrasta (até 35% da força numa marcha longa demais). A
+  redução que passaria do corte é recusada, como num Fórmula 1. Em cruzeiro a
+  janela não abre — o carro precisa estar ganhando velocidade —, então subir e
+  descer de marcha não fabrica turbo, e frear para colher trocas perfeitas
+  nunca compensa (há teste para isso).
+- Medido da largada até 245 km/h, no normal: automático, 5,9 s; trocando
+  sempre na janela, 3,9 s; trocando só depois de bater no corte, 7,0 s;
+  trocando com o motor em meio giro, 6,2 s. Numa prova inteira, com o piloto
+  completo, acertar todas as trocas vale pouco mais de um segundo sobre o
+  automático, e atrasá-las custa quase um.
+- **Freio**: de 95 a 135 km/h por segundo, mais forte em alta, como a asa
+  ajuda um Fórmula 1 de verdade. Vence o acelerador e o boost. Como a força da
+  curva cresce com o quadrado da velocidade, frear antes do grampo é o que deixa
+  entrar por dentro sem ir para o muro. Freando, a luz de chuva pisca, como a
+  de um Fórmula 1 recuperando energia.
+- **Pé fora**: sem acelerar nem frear, o carro perde uns 22 km/h por segundo em
+  cruzeiro — arrasto e freio-motor. Tirar o pé no meio de um impulso o joga
+  fora. O boost também acelera, mesmo sem o pedal.
+
+**O som segue o câmbio** (`src/game/motorF1.ts`). O motor gravado de cada carro
+sobe e cai exatamente quando a física troca: a voz que aguenta cai o que a
+marcha cai, e as gravadas só no alto do giro encolhem a queda — o V8 da Brawn a
+62%, o V10 da Williams a 71% — para a gravação nunca ser esticada além de um
+quinto. Na subida a ignição corta por um instante e o escapamento estala (e a
+válvula do turbo sopra, nos V6 dos anos oitenta); na redução o câmbio dá o
+toque no acelerador, o giro pula e o escapamento pipoca; no corte, o limitador
+engasga dezesseis vezes por segundo; tirando o pé em giro alto, o escapamento
+estoura, cada vez mais fraco. No grid, segurar o W segura o giro da largada.
+Medido fora de tempo real, o estalo da subida passa de 2 a 7 dB por cima do
+motor, conforme a voz (o híbrido, abafado pela turbina, de 1 a 2 dB), sem
+nenhum ponto passar de 0,45 na saída.
+
+**Os avisos ficam acima do horizonte.** No monitor e no notebook, batida, fora
+da pista, reset, tangência, troca perfeita, parcial, nota de curva e o painel do
+rival moram em duas colunas na faixa do HUD, uma de cada lado do cronômetro —
+à esquerda o que cobra, à direita o que paga —, e as luzes da largada viram um
+pórtico no alto da tela. A pista que vem, onde se leem a curva e o obstáculo,
+fica inteira à vista. No celular cada aviso fica onde sempre esteve.
+
+Além dos pedais, há três coisas disputando a direção e o boost.
 
 **A curva empurra, e quem segura o volante a faz.** A curvatura vem do traçado
 sorteado para a corrida, a mesma que está sendo desenhada na tela, e entra na
@@ -369,7 +430,7 @@ O servidor não confia mais no que o cliente diz ser:
   - o relógio do servidor mede a tentativa inteira, e o tempo declarado precisa caber nela — o jogo em câmera lenta, que derrubou o topo do Trackmania, declara menos do que passou. Vale para a Pista do Dia, os desafios e o Circuito Oficial;
   - a volta gravada precisa bater com o tempo, chegar à linha e nunca passar do teto do nível;
   - volante trocando de lado mais de oito vezes por segundo, ou tempo abaixo do piloto de referência, deixam o tempo **pendente**, fora do quadro até ser conferido.
-- **Re-simulação pelos comandos**, a camada do Trackmania (`src/game/registroDeEntradas.ts`). O jogo roda a física em passos arredondados ao microssegundo e guarda, de cada quadro, o passo e os três botões — esquerda, direita, boost —, compactados em sequências repetidas: uma volta inteira cabe em poucos KB. O servidor refaz a volta com o mesmo `advanceRace` — o quadro longo do celular lento vira passos iguais, no aparelho e no servidor — e confere com a gravada, com tolerância, porque `Math.exp` e `Math.pow` podem diferir entre motores de JavaScript: mediana do desvio até 5 m, no máximo 10% das amostras acima de 25 m, e a chegada no mesmo segundo. A volta que passa sai de **pendente** direto para o quadro — só o volante suspeito ainda espera conferência. Uma aba escondida que pulou quadros registra o salto, e a re-simulação o repete.
+- **Re-simulação pelos comandos**, a camada do Trackmania (`src/game/registroDeEntradas.ts`). O jogo roda a física em passos arredondados ao microssegundo e guarda, de cada quadro, o passo e os comandos — esquerda, direita, boost, acelerador, freio, as duas borboletas e o câmbio, num byte —, compactados em sequências repetidas: uma volta inteira cabe em poucos KB. O servidor refaz a volta com o mesmo `advanceRace` — o quadro longo do celular lento vira passos iguais, no aparelho e no servidor — e confere com a gravada, com tolerância, porque `Math.exp` e `Math.pow` podem diferir entre motores de JavaScript: mediana do desvio até 5 m, no máximo 10% das amostras acima de 25 m, e a chegada no mesmo segundo. A volta que passa sai de **pendente** direto para o quadro — só o volante suspeito ainda espera conferência. Uma aba escondida que pulou quadros registra o salto, e a re-simulação o repete.
 
 O passo a passo do evento, com conferência de véspera, rede de reserva e roteiro da apresentação, está em [WORKSHOP.md](WORKSHOP.md).
 

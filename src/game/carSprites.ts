@@ -80,6 +80,12 @@ export type CarPose = {
   drift: number
   /** Brilho da luz de chuva e do escapamento durante o boost, de 0 a 1. */
   boost: number
+  /**
+   * Brilho da luz de chuva na frenagem, de 0 a 1, já com a piscada. É a luz
+   * que o Fórmula 1 pisca quando recupera energia freando: o aviso a quem
+   * vem atrás. Ausente, apagada.
+   */
+  freio?: number
   /** Trepidação fora do asfalto, em unidades do desenho. */
   jitter: number
   /** Terra na carroceria depois da grama, de 0 a 1. */
@@ -1019,6 +1025,20 @@ export function drawCar(
       ctx.ellipse(m.x, m.y, m.rx, m.ry, 0, 0, Math.PI * 2)
       ctx.fill()
     }
+    ctx.restore()
+  }
+
+  // Freando, só a luz de chuva: sem o fogo do escapamento, que é do boost.
+  if ((pose.freio ?? 0) > 0.01 && pose.boost <= 0.01) {
+    const { luzDeChuva } = geometria
+    ctx.save()
+    aplicar(ctx, geometria.traseira[quadro])
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.fillStyle = '#ff3a2a'
+    ctx.globalAlpha *= Math.min(1, pose.freio ?? 0)
+    ctx.beginPath()
+    ctx.ellipse(luzDeChuva.x, luzDeChuva.y, luzDeChuva.raio * 1.6, luzDeChuva.raio * 1.6, 0, 0, Math.PI * 2)
+    ctx.fill()
     ctx.restore()
   }
 

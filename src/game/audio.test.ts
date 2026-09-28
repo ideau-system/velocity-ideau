@@ -6,6 +6,7 @@ import {
   GEAR_EDGES,
   IDLE_RPM,
   mixFor,
+  tomDaMarcha,
   type AudioLevels,
 } from './audio'
 
@@ -127,5 +128,19 @@ describe('mistura das camadas', () => {
         }
       }
     }
+  })
+})
+
+describe('nota presa ao câmbio da física', () => {
+  it('a marcha é a da física, e a nota sobe com o giro dentro dela', () => {
+    expect(tomDaMarcha(3, 0.5).gear).toBe(3)
+    expect(tomDaMarcha(3, 0.9).frequency).toBeGreaterThan(tomDaMarcha(3, 0.5).frequency)
+    expect(tomDaMarcha(3, 1).rpm).toBeCloseTo(1, 9)
+    expect(tomDaMarcha(3, 0).rpm).toBeCloseTo(IDLE_RPM, 9)
+  })
+
+  it('aguenta valores estranhos', () => {
+    expect(tomDaMarcha(Number.NaN, Number.NaN)).toEqual(tomDaMarcha(0, 0))
+    expect(tomDaMarcha(2, 7).rpm).toBeCloseTo(1, 9)
   })
 })

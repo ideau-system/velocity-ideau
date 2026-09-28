@@ -25,7 +25,12 @@ export type RegistroDeEntradas = {
   quadrosUs: number[]
   /**
    * Os comandos, em trechos: `[bits, quadros, bits, quadros, …]`. Bit 1 é
-   * esquerda, 2 é direita, 4 é boost.
+   * esquerda, 2 é direita, 4 é boost, 8 é o pé fora do acelerador, 16 é o
+   * freio, 32 e 64 são as borboletas de subir e de reduzir, e 128 é o câmbio
+   * manual.
+   *
+   * O acelerador vai invertido de propósito: sem o bit, o pé está no fundo, que
+   * é o que valia antes de o carro ter pedal — e o que vale no toque.
    */
   comandos: number[]
   /** A largada, e antes de qual quadro ela foi aplicada. */
@@ -46,12 +51,33 @@ export function quantizarPasso(dt: number) {
   return Math.round(Math.min(dt, 1) * 1e6) / 1e6
 }
 
-function bitsDe(input: RaceInput) {
-  return (input.left ? 1 : 0) | (input.right ? 2 : 0) | (input.boost ? 4 : 0)
+/** O maior valor que os bits de um quadro podem ter. */
+const MAIORES_BITS = 255
+
+export function bitsDe(input: RaceInput) {
+  return (
+    (input.left ? 1 : 0) |
+    (input.right ? 2 : 0) |
+    (input.boost ? 4 : 0) |
+    (input.throttle === false ? 8 : 0) |
+    (input.brake ? 16 : 0) |
+    (input.shiftUp ? 32 : 0) |
+    (input.shiftDown ? 64 : 0) |
+    (input.manual ? 128 : 0)
+  )
 }
 
-function inputDe(bits: number): RaceInput {
-  return { left: (bits & 1) !== 0, right: (bits & 2) !== 0, boost: (bits & 4) !== 0 }
+export function inputDe(bits: number): RaceInput {
+  return {
+    left: (bits & 1) !== 0,
+    right: (bits & 2) !== 0,
+    boost: (bits & 4) !== 0,
+    throttle: (bits & 8) === 0,
+    brake: (bits & 16) !== 0,
+    shiftUp: (bits & 32) !== 0,
+    shiftDown: (bits & 64) !== 0,
+    manual: (bits & 128) !== 0,
+  }
 }
 
 /** Grava os comandos de cada quadro de física. */
@@ -95,7 +121,7 @@ export function registroValido(bruto: unknown): RegistroDeEntradas | null {
   if (comandos.length % 2 !== 0 || saltos.length % 2 !== 0) return null
   let total = 0
   for (let i = 0; i < comandos.length; i += 2) {
-    if (!Number.isInteger(comandos[i]) || comandos[i] < 0 || comandos[i] > 7) return null
+    if (!Number.isInteger(comandos[i]) || comandos[i] < 0 || comandos[i] > MAIORES_BITS) return null
     if (!Number.isInteger(comandos[i + 1]) || comandos[i + 1] <= 0) return null
     total += comandos[i + 1]
   }

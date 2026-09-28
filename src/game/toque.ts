@@ -1,8 +1,16 @@
 import type { RaceInput } from './simulation'
 
-export type Comando = keyof RaceInput
+/** Os comandos que se seguram: direção, boost e os dois pedais. */
+export type Comando = 'left' | 'right' | 'boost' | 'throttle' | 'brake'
 
-const COMANDOS: readonly Comando[] = ['left', 'right', 'boost']
+/** As borboletas do câmbio: cada toque troca uma marcha, e segurar não troca outra. */
+export type Borboleta = 'shiftUp' | 'shiftDown'
+
+const COMANDOS: readonly Comando[] = ['left', 'right', 'boost', 'throttle', 'brake']
+
+function soltos(): Record<Comando, boolean> {
+  return { left: false, right: false, boost: false, throttle: false, brake: false }
+}
 
 /**
  * Os comandos da corrida, de todas as origens: o teclado e cada dedo na tela.
@@ -16,17 +24,46 @@ const COMANDOS: readonly Comando[] = ['left', 'right', 'boost']
  * O estado é por dedo, e não por botão: dois dedos no mesmo botão não se
  * anulam quando um deles sai, e o dedo que desliza de um lado para o outro
  * leva o comando junto.
+ *
+ * As borboletas são contadas, e não seguradas: dois toques rápidos entre dois
+ * quadros trocam duas marchas, uma em cada quadro, e segurar a tecla não troca
+ * nenhuma a mais.
  */
 export class Comandos {
-  private readonly teclas: RaceInput = { left: false, right: false, boost: false }
+  private readonly teclas = soltos()
   private readonly dedos = new Map<number, Comando>()
-  private readonly pendentes: RaceInput = { left: false, right: false, boost: false }
+  private readonly pendentes = soltos()
+  private readonly toques: Record<Borboleta, number> = { shiftUp: 0, shiftDown: 0 }
   /** A entrada entregue à física, reaproveitada a cada quadro. */
-  private readonly doQuadro: RaceInput = { left: false, right: false, boost: false }
+  private readonly doQuadro: Required<RaceInput> = {
+    left: false,
+    right: false,
+    boost: false,
+    throttle: false,
+    brake: false,
+    shiftUp: false,
+    shiftDown: false,
+    manual: false,
+  }
+
+  /** Câmbio manual: as borboletas trocam de marcha. No automático, elas não fazem nada. */
+  manual = false
+
+  /**
+   * O pé fica no fundo sem ninguém segurar: é o acelerador do toque, em que os
+   * dois polegares já estão ocupados com a direção e o boost. Só o freio o
+   * levanta.
+   */
+  aceleradorAutomatico = false
 
   tecla(comando: Comando, ativa: boolean) {
     if (ativa && !this.teclas[comando]) this.pendentes[comando] = true
     this.teclas[comando] = ativa
+  }
+
+  /** Um toque na borboleta: da tecla que desceu, ou do dedo no botão. */
+  borboleta(qual: Borboleta) {
+    this.toques[qual] += 1
   }
 
   dedoDesceu(dedo: number, comando: Comando) {
@@ -65,15 +102,22 @@ export class Comandos {
 
   /**
    * A entrada do quadro: o que está segurado agora, mais os toques que
-   * acabaram antes de a física vê-los. Esvazia os pendentes, então precisa
-   * ser chamada em todo quadro — inclusive na contagem, para um toque dado
-   * antes do VAI! não vazar para a largada.
+   * acabaram antes de a física vê-los, e uma troca de marcha por borboleta
+   * tocada. Esvazia os pendentes, então precisa ser chamada em todo quadro —
+   * inclusive na contagem, para um toque dado antes do VAI! não vazar para a
+   * largada.
    */
   consumir(): RaceInput {
     for (const comando of COMANDOS) {
       this.doQuadro[comando] = this.segurando(comando) || this.pendentes[comando]
       this.pendentes[comando] = false
     }
+    if (this.aceleradorAutomatico) this.doQuadro.throttle = true
+    for (const qual of ['shiftUp', 'shiftDown'] as const) {
+      this.doQuadro[qual] = this.toques[qual] > 0
+      if (this.toques[qual] > 0) this.toques[qual] -= 1
+    }
+    this.doQuadro.manual = this.manual
     return this.doQuadro
   }
 
@@ -84,6 +128,8 @@ export class Comandos {
       this.teclas[comando] = false
       this.pendentes[comando] = false
     }
+    this.toques.shiftUp = 0
+    this.toques.shiftDown = 0
   }
 }
 

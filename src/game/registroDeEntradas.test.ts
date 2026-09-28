@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { correrSemTela } from './corridaSimulada'
 import { GravadorDeVolta } from './gravador'
 import { desviando, pilotoCompleto, type Piloto } from './piloto'
-import { GravadorDeEntradas, progressoEm, quantizarPasso, refazerVolta, registroValido } from './registroDeEntradas'
-import { advanceRace, createRaceState, type RaceInput } from './simulation'
+import { bitsDe, GravadorDeEntradas, inputDe, progressoEm, quantizarPasso, refazerVolta, registroValido } from './registroDeEntradas'
+import { advanceRace, createRaceState, velocidadeDaMarcha, type RaceInput } from './simulation'
 import { createRaceContext, createTrackLayout, type TrackLayout } from './layout'
 
 const QUADRO = quantizarPasso(1 / 60)
@@ -102,8 +102,42 @@ describe('registro de comandos', () => {
     const { registro } = voltaGravada(7, () => desviando(true))
     expect(registroValido(null)).toBeNull()
     expect(registroValido({ ...registro, comandos: [...registro.comandos, 1] })).toBeNull()
-    expect(registroValido({ ...registro, comandos: registro.comandos.map((valor, i) => (i === 0 ? 9 : valor)) })).toBeNull()
+    expect(registroValido({ ...registro, comandos: registro.comandos.map((valor, i) => (i === 0 ? 256 : valor)) })).toBeNull()
+    expect(registroValido({ ...registro, comandos: registro.comandos.map((valor, i) => (i === 0 ? -1 : valor)) })).toBeNull()
     expect(registroValido({ ...registro, quadrosUs: registro.quadrosUs.slice(1) })).toBeNull()
     expect(registroValido({ ...registro, largada: { nivel: 5, queimou: false, quadro: 0 } })).toBeNull()
+  })
+
+  it('cada comando do carro cabe nos bits e volta igual', () => {
+    for (let bits = 0; bits <= 255; bits += 1) expect(bitsDe(inputDe(bits))).toBe(bits)
+    // Sem pedal informado é pé no fundo: o registro de antes do câmbio continua valendo.
+    expect(inputDe(0)).toMatchObject({ throttle: true, brake: false, manual: false })
+    expect(bitsDe({ left: false, right: false, boost: false })).toBe(0)
+    expect(bitsDe({ left: false, right: false, boost: false, throttle: false, brake: true, manual: true })).toBe(8 | 16 | 128)
+  })
+
+  it('a volta de câmbio manual, com freio e borboletas, é refeita igual', () => {
+    // O piloto completo, trocando na janela, freando antes de cada super curva
+    // e tirando o pé na entrada dela, enquanto ainda vem embalado.
+    const { registro, prova } = voltaGravada(7, (layout) => {
+      const piloto = pilotoCompleto(layout)
+      return (state) => {
+        const antesDaCurva = layout.superCurves.some((curva) => state.progress > curva.start - 60 && state.progress < curva.start)
+        const naCurva = layout.superCurves.some((curva) => state.progress >= curva.start && state.progress < curva.end)
+        return {
+          ...piloto(state),
+          manual: true,
+          throttle: !(naCurva && state.speed > 170),
+          brake: antesDaCurva && !naCurva && state.speed > 150,
+          shiftUp: state.janelaDeTroca,
+          shiftDown: state.marcha > 0 && state.speed < velocidadeDaMarcha(state.rules, state.marcha - 1) * 0.9,
+        }
+      }
+    })
+    expect(prova.terminou).toBe(true)
+    expect(registroValido(registro)).toEqual(registro)
+    const refeita = refazerVolta(registro, 7, 'dificil')
+    expect(refeita.terminou).toBe(true)
+    expect(refeita.chegada).toBeCloseTo(prova.tempo, 9)
   })
 })

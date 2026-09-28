@@ -30,6 +30,12 @@ export type AnaliseDaCorrida = {
   batidas: number
   resets: number
   raspoes: number
+  /** Subidas de marcha feitas na mão, no câmbio manual. */
+  subidasNaMao: number
+  /** Quantas delas foram na janela da troca perfeita. */
+  trocasPerfeitas: number
+  /** Segundos batendo no limitador de giro, sem trocar. */
+  segundosNoCorte: number
   /**
    * Tempo de prova, em segundos, ao fim de cada setor — na saída de cada super
    * curva e na chegada —, ou null para o setor que o carro não completou.
@@ -71,6 +77,9 @@ export class AnalistaDaCorrida {
       batidas: 0,
       resets: 0,
       raspoes: 0,
+      subidasNaMao: 0,
+      trocasPerfeitas: 0,
+      segundosNoCorte: 0,
       parciais: this.fins.map(() => null),
     }
   }
@@ -98,7 +107,12 @@ export class AnalistaDaCorrida {
   observar(state: RaceState, eventos: readonly RaceEvent[], passo: number, tempoDeProva: number) {
     if (state.offRoad) this.dados.segundosNaGrama += passo
     if (state.boostLocked) this.dados.segundosDeBoostTravado += passo
+    if (state.noCorte > 0) this.dados.segundosNoCorte += passo
     for (const evento of eventos) {
+      if (evento.type === 'troca' && evento.para > evento.de && evento.qualidade !== 'automatica') {
+        this.dados.subidasNaMao += 1
+        if (evento.qualidade === 'perfeita') this.dados.trocasPerfeitas += 1
+      }
       if (evento.type === 'apex') {
         this.dados.tangencias += 1
         this.dados.maiorSequencia = Math.max(this.dados.maiorSequencia, evento.sequencia)
@@ -133,6 +147,14 @@ export type PerdaDeTempo = { motivo: string; segundos: number }
  * medida com os pilotos de teste, e não conta exata.
  */
 const TANGENCIA_PERDIDA_S = 0.3
+
+/**
+ * Fração do tempo no limitador que virou tempo de prova perdido. No corte o
+ * carro não ganha velocidade, mas também não perde: o prejuízo é o que ele
+ * deixou de ganhar, menos que o tempo inteiro. Estimativa, medida com os
+ * pilotos de teste.
+ */
+const CORTE_PERDIDO = 0.5
 
 /** Largada perfeita contra cada outra: o que o carro deixou na linha. */
 const LARGADA_PERDIDA_S = [0.5, 0.3, 0.15, 0] as const
@@ -171,6 +193,12 @@ export function ondePerdeuTempo(analise: AnaliseDaCorrida, rules: RaceRules): Pe
     perdas.push({
       motivo: `${analise.segundosNaGrama.toFixed(1).replace('.', ',')} s na grama`,
       segundos: analise.segundosNaGrama * (1 - rules.offRoadSpeed / rules.cruiseSpeed),
+    })
+  }
+  if (analise.segundosNoCorte > 0.2) {
+    perdas.push({
+      motivo: `${analise.segundosNoCorte.toFixed(1).replace('.', ',')} s batendo no corte`,
+      segundos: analise.segundosNoCorte * CORTE_PERDIDO,
     })
   }
   if (analise.largada) {

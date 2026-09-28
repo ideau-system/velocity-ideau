@@ -49,6 +49,10 @@ export default function ResumoDaProva({ analise, difficulty }: Props) {
             </dd>
           </div>
           <div><dt>RASPÕES</dt><dd>{analise.raspoes}</dd></div>
+          {/* Só para quem trocou na mão: no automático não há troca a julgar. */}
+          {analise.subidasNaMao > 0 && (
+            <div><dt>TROCAS PERFEITAS</dt><dd>{analise.trocasPerfeitas}/{analise.subidasNaMao}</dd></div>
+          )}
         </dl>
       </div>
 
