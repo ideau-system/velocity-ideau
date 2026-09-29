@@ -268,7 +268,7 @@ describe('largada sincronizada pelo socket', () => {
 })
 
 describe('telemetria e carro fantasma pelo socket', () => {
-  type Rival = { playerId: string; t: number; progress: number; lateral: number; speed: number; state: string }
+  type Rival = { playerId: string; t: number; progress: number; lateral: number; speed: number; state: string; boosting?: boolean }
 
   /** Coloca os dois pilotos correndo de verdade, já passado o instante da largada. */
   async function emCorrida() {
@@ -301,6 +301,17 @@ describe('telemetria e carro fantasma pelo socket', () => {
     expect(rival.progress).toBe(340)
     expect(rival.lateral).toBeCloseTo(0.4, 5)
     expect(rival.playerId).toBe('ana')
+  })
+
+  it('o boost do piloto chega ao adversário, para a chama acender no fantasma', async () => {
+    const { ana, beto, code } = await emCorrida()
+    const deBoost = waitFor<Rival>(beto, 'race:rival')
+    ana.emit('race:telemetry', medicao(code, 'ana', 200, { boosting: true }))
+    expect((await deBoost).boosting).toBe(true)
+
+    const semBoost = waitFor<Rival>(beto, 'race:rival')
+    ana.emit('race:telemetry', medicao(code, 'ana', 220, { t: Date.now() + 1 }))
+    expect((await semBoost).boosting).toBe(false)
   })
 
   it('não devolve a própria telemetria para quem a enviou', async () => {

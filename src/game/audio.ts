@@ -46,15 +46,32 @@ export type AudioLevels = {
   offRoad: number
   /** Falso antes da largada e depois da bandeirada: o motor fica em marcha lenta. */
   running: boolean
+  /**
+   * Marcha engatada na física: 0 é a primeira. Presente, o motor segue o
+   * câmbio do carro, e cada troca que o piloto faz é a que se ouve. Ausente —
+   * na arquibancada, que só conhece a velocidade —, o som escolhe a marcha.
+   */
+  marcha?: number
+  /** Giro dentro da marcha, de 0 a 1: em 1 o motor bate no corte. */
+  giro?: number
+  /**
+   * Pé no acelerador. Sem ele, o motor corre solto e o escapamento estoura; no
+   * grid, com ele, o piloto segura o giro da largada.
+   */
+  acelerador?: boolean
+  /** Pé no freio. */
+  freando?: boolean
+  /** Batendo no limitador de giro. */
+  noCorte?: boolean
 }
 
 /**
- * Fim de cada marcha, em fração da velocidade máxima.
+ * Fim de cada marcha, em fração da velocidade máxima, para quando o som não
+ * conhece o câmbio da física — a arquibancada.
  *
- * O carro é de aceleração automática e o piloto não troca marcha — isto é
- * som, não regra. Mas é justamente a nota subindo, caindo e subindo de novo
- * que dá escala à velocidade: uma sirene que sobe uma vez só vira ruído de
- * fundo, e o ouvido deixa de medir o quanto o carro está rápido.
+ * É a nota subindo, caindo e subindo de novo que dá escala à velocidade: uma
+ * sirene que sobe uma vez só vira ruído de fundo, e o ouvido deixa de medir o
+ * quanto o carro está rápido.
  */
 export const GEAR_EDGES = [0.2, 0.36, 0.55, 0.78, 1.01]
 
@@ -80,6 +97,18 @@ export type EngineTone = {
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
+}
+
+/**
+ * Marcha, rotação e frequência para a marcha e o giro da física.
+ *
+ * É a mesma nota de `engineTone`, só que presa ao câmbio do carro: a troca
+ * que o piloto faz é a que o sintetizador toca.
+ */
+export function tomDaMarcha(marcha: number, giro: number): EngineTone {
+  const g = Number.isFinite(giro) ? clamp(giro, 0, 1) : 0
+  const rpm = IDLE_RPM + (1 - IDLE_RPM) * g
+  return { gear: Number.isFinite(marcha) ? Math.max(0, Math.round(marcha)) : 0, rpm, frequency: ENGINE_BASE_HZ + rpm * ENGINE_SWEEP_HZ }
 }
 
 /** Marcha, rotação e frequência para uma dada fração da velocidade máxima. */
@@ -196,9 +225,13 @@ export class RaceAudio {
     this.engineGain.gain.setValueAtTime(0, agora)
     this.engineFilter.connect(this.engineGain).connect(this.master)
 
+    // Uma única fonte de ruído alimenta vento, rolamento, cascalho e os
+    // estalos do escapamento. Várias soariam igual e custariam mais.
+    const ruido = ruidoBranco(ctx)
+
     // As amostras começam a chegar agora; até ficarem prontas, os osciladores
     // abaixo fazem o papel do motor.
-    this.motorF1 = new MotorF1(ctx, this.master, vozDoCarro(carro))
+    this.motorF1 = new MotorF1(ctx, this.master, vozDoCarro(carro), ruido)
 
     for (const [tipo, desafinacao, ganho] of [
       ['sawtooth', 0, 1],
@@ -215,10 +248,8 @@ export class RaceAudio {
       this.osciladores.push(osc)
     }
 
-    // Uma única fonte de ruído alimenta vento, rolamento e cascalho. Três
-    // fontes soariam igual e custariam três vezes mais.
     this.ruido = ctx.createBufferSource()
-    this.ruido.buffer = ruidoBranco(ctx)
+    this.ruido.buffer = ruido
     this.ruido.loop = true
 
     this.windGain = this.camadaDeRuido(ctx, 'bandpass', 1_100, 0.8)
@@ -248,7 +279,10 @@ export class RaceAudio {
   update(levels: AudioLevels) {
     if (this.encerrado) return
     const agora = this.ctx.currentTime
-    const tone = engineTone(levels.speed)
+    const tone =
+      levels.running && levels.marcha !== undefined && levels.giro !== undefined
+        ? tomDaMarcha(levels.marcha, levels.giro)
+        : engineTone(levels.speed)
     const mix = mixFor(levels, tone)
 
     // A troca de marcha corta o som por um instante, como uma embreagem. É o
@@ -377,6 +411,7 @@ export class RaceAudio {
   setMuted(silenciado: boolean) {
     if (this.encerrado) return
     this.silenciado = silenciado
+    this.motorF1.silenciado = silenciado
     this.master.gain.setTargetAtTime(silenciado ? 0 : MASTER_GAIN, this.ctx.currentTime, 0.05)
     this.trilha.setEnabled(this.musicaLigada && !silenciado)
   }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { countdownAt, DEFAULT_COUNTDOWN_MS, LIGHT_COUNT, lateBy } from './countdown'
 import {
   gapBetween,
@@ -11,6 +11,7 @@ import {
 } from './ghost'
 import { RaceAudio, faixaDaCorrida } from './audio'
 import { definirMusicaDesligada, definirSomDesligado, lerMusicaDesligada, lerSomDesligado } from './preferenciasDeSom'
+import { aparelhoDeToque, definirCambio, lerCambio } from './preferenciasDeCambio'
 import { carById, type CarId } from './cars'
 import {
   carImageUrl,
@@ -25,11 +26,12 @@ import {
   ALCANCE_DO_RADAR_M,
   desenharEtiquetasDosFantasmas,
   desenharRadarTraseiro,
+  hierarquiaDosFantasmas,
   opacidadeDoFantasma,
   type EtiquetaDoFantasma,
   type RivalAtras,
 } from './fantasmaNaTela'
-import { createFeel, registerImpact, updateFeel } from './feel'
+import { BOOST_TAU, createFeel, registerImpact, updateFeel } from './feel'
 import { LUZ, misturar, rampa } from './paleta'
 import {
   desenharFaixaDeFundo,
@@ -58,16 +60,29 @@ import {
   advanceRace,
   APEX_BOOST,
   APEX_LATERAL,
+  CARGA_NIVEIS,
   createRaceState,
+  MAX_FRAME_SECONDS,
   MAX_STEP_SECONDS,
+  motorForte,
+  RASPAO_BOOST,
   RESET_SECONDS,
   RESET_STRIKES,
   slipstreamFrom,
+  IMPULSO_DA_TROCA,
+  TOLERANCIA_DO_CORTE,
+  type QualidadeDaTroca,
   type RaceContext,
   type ResetReason,
 } from './simulation'
+import { aplicarLargada, JuizDaLargada, type Largada } from './largada'
+import { AnalistaDaCorrida, type AnaliseDaCorrida } from './analise'
+import { GravadorDeVolta, ReproducaoDeVolta, type GravacaoDeVolta } from './gravador'
+import { GravadorDeEntradas, quantizarPasso, type RegistroDeEntradas } from './registroDeEntradas'
+import type { Recorde } from './contrarrelogio'
+import { MODIFICADORES, type Modificador } from './desafios'
 import { RitmoDoQuadro } from './ritmoDoQuadro'
-import { Comandos, ladoDoDedo, type Comando } from './toque'
+import { Comandos, ladoDoDedo, type Borboleta, type Comando } from './toque'
 import { EmissionRate, ParticleField, TRAIL_SETBACK, WHEEL_OFFSET, type Particle } from './particles'
 import {
   CAMERA_DEPTH,
@@ -99,6 +114,14 @@ export type RaceResult = {
   collisions: number
   /** Atraso, em segundos, com que este dispositivo entrou na corrida. */
   lateStart: number
+  /** O que a prova mostrou: tangências, mini-turbos, parciais e o que custou tempo. */
+  analise?: AnaliseDaCorrida
+  /** A volta inteira, para virar o fantasma do recorde. */
+  gravacao?: GravacaoDeVolta
+  /** Por onde o piloto dirigiu por último: o quadro mostra teclado e toque lado a lado. */
+  dispositivo?: 'teclado' | 'toque'
+  /** Os comandos de cada quadro, para o servidor refazer a volta e conferi-la. */
+  entradas?: RegistroDeEntradas
 }
 
 type RaceCanvasProps = {
@@ -124,13 +147,28 @@ type RaceCanvasProps = {
   /** Relógio sincronizado. No modo treino é o relógio local. */
   now?: () => number
   /**
-   * Treino, corrida online, ou arquibancada. No modo espectador não há carro
-   * próprio: a câmera segue um dos pilotos — o líder, ou quem se escolher — e
-   * `rivals` traz todos eles.
+   * Treino, corrida online, contrarrelógio ou arquibancada. O contrarrelógio é
+   * o treino com o fantasma do recorde, as parciais contra ele e o recomeço
+   * instantâneo. No modo espectador não há carro próprio: a câmera segue um dos
+   * pilotos — o líder, ou quem se escolher — e `rivals` traz todos eles.
    */
-  mode?: 'solo' | 'online' | 'espectador'
+  mode?: 'solo' | 'online' | 'contrarrelogio' | 'espectador'
   /** Quantos assistem da arquibancada, para a tela dizer que há público. */
   espectadores?: number
+  /**
+   * O fantasma do contrarrelógio: o recorde pessoal nesta semente e nível, ou a
+   * volta de outro piloto do quadro, com o nome dele. Corre sem esteira.
+   */
+  recorde?: (Recorde & { nome?: string }) | null
+  /** Recomeçar a prova na hora, sem passar pelo menu. */
+  onRestart?: () => void
+  /** O modificador do desafio da semana: troca as regras do nível nesta prova. */
+  modificador?: Modificador | null
+  /**
+   * Prova que vale ponto ou troféu — a ranqueada e a Copa. Nela, como no
+   * contrarrelógio, o carro é só pintura: o easter egg de `turboDoPiloto` não vale.
+   */
+  competitivo?: boolean
   /** Aviso de conexão exibido sobre a pista sem interromper a corrida. */
   connectionNotice?: string | null
   /** Chamado a cada medição para ser enviada ao servidor. */
@@ -146,8 +184,17 @@ export type RaceRival = {
   car: CarId
   /** Falso enquanto o rival está sem sinal. */
   connected: boolean
-  /** Posições recentes do rival, já tratadas contra atraso de rede. */
-  ghost: GhostTracker
+  /**
+   * Posições do rival. O fantasma de rede, já tratado contra atraso, ou a volta
+   * gravada do recorde: os dois respondem onde o carro está num instante.
+   */
+  ghost: Pick<GhostTracker, 'sample'>
+  /**
+   * Sem esteira. O fantasma do recorde não deixa vácuo: se deixasse, o tempo
+   * do contrarrelógio dependeria de correr colado nele, e deixaria de ser
+   * comparável com o de quem correu sozinho.
+   */
+  semVacuo?: boolean
 }
 
 /** O que o HUD mostra sobre o rival mais perto. */
@@ -161,6 +208,8 @@ type RivalHud = {
   finished: boolean
   /** Com o fantasma à vista, o painel encolhe para não tapar a pista. */
   onScreen: boolean
+  /** O rival está de boost agora. */
+  boosting: boolean
 }
 
 /** Uma linha da classificação ao vivo, como o painel a mostra. */
@@ -177,6 +226,8 @@ type LinhaDoPainel = {
   destaque: boolean
   /** Fração da prova já percorrida, de 0 a 1, para a marca na barra de progresso. */
   fracao: number
+  /** De boost agora: a barra da cor do carro acende em ciano. */
+  boost: boolean
 }
 
 /** Quem a câmera do espectador está seguindo, como o painel dele mostra. */
@@ -212,6 +263,18 @@ type Telemetry = {
   resets: number
   /** A próxima super curva, quando ela já está ao alcance da nota. */
   nota: NotaDeCurva | null
+  /** Carga do mini-turbo, em segundos de carga ideal. */
+  carga: number
+  /** Nível que a carga já alcançou: 0 a 3. */
+  nivelCarga: number
+  /** Um impulso — mini-turbo ou largada — em curso. */
+  impulso: boolean
+  /** Diferença para o recorde no mesmo ponto da pista, em segundos, ou null sem recorde. */
+  delta: number | null
+  /** Segundos seguidos batendo no corte, sem trocar. */
+  noCorte: number
+  /** Pé no acelerador: o pedal ou o boost. */
+  acelerando: boolean
 }
 
 const initialTelemetry: Telemetry = {
@@ -230,6 +293,12 @@ const initialTelemetry: Telemetry = {
   resetting: 0,
   resets: 0,
   nota: null,
+  carga: 0,
+  nivelCarga: 0,
+  impulso: false,
+  delta: null,
+  noCorte: 0,
+  acelerando: true,
 }
 
 /**
@@ -287,6 +356,14 @@ const FAISCA_QUENTE = '#fff3c4'
 
 /** Fumaça de pneu queimado: cinza claro e frio, que não se confunde com a poeira da grama. */
 const FUMACA_DE_PNEU = '#d7dcdf'
+
+/**
+ * Cor das faíscas da carga do mini-turbo, por nível: branco antes do
+ * primeiro, depois azul, laranja e roxo — as cores do Mario Kart, que o
+ * jogador já conhece. O tamanho cresce junto, para o nível não depender só da
+ * cor.
+ */
+const COR_DA_CARGA = ['#e8f4ff', '#4fb6ff', '#ff9a2e', '#c86bff'] as const
 
 /**
  * Quanto a paisagem gira por radiano de rumo, em larguras de tela.
@@ -409,7 +486,36 @@ const ALTURA_DA_FAMILIA: Record<FamiliaDeVaga, number> = {
  */
 const SOMBRA_NO_CHAO = 'rgba(10,20,26,.3)'
 
-const COMANDOS_DE_TOQUE: readonly Comando[] = ['left', 'right', 'boost']
+/** Diferença de tempo com sinal, em segundos com centésimos: −0,42 é ganho. */
+function formatarDelta(segundos: number) {
+  const sinal = segundos <= 0 ? '−' : '+'
+  return `${sinal}${Math.abs(segundos).toFixed(2).replace('.', ',')}`
+}
+
+/** Os botões de toque que acendem: os que se seguram e as borboletas. */
+type BotaoDeToque = Comando | Borboleta
+
+const BOTOES_DE_TOQUE: readonly BotaoDeToque[] = ['left', 'right', 'boost', 'brake', 'shiftUp', 'shiftDown']
+
+/** Luzes do volante: cinco verdes, cinco vermelhas e cinco azuis, como num Fórmula 1. */
+const LUZES_DO_CAMBIO = 15
+
+/** Giro em que a primeira luz do volante acende. Abaixo dele, apagadas. */
+const GIRO_DA_PRIMEIRA_LUZ = 0.55
+
+/** Segundos no corte até a tela lembrar de subir a marcha. */
+const LEMBRETE_DO_CORTE_S = 1
+
+/** Segundos parado na largada, sem acelerar, até a tela lembrar do pedal. */
+const LEMBRETE_DO_PEDAL_S = 1.5
+
+/** O que a etiqueta ao lado da marcha diz de cada troca que ela comenta. */
+const NOTA_DA_TROCA: Partial<Record<QualidadeDaTroca | 'negada', string>> = {
+  perfeita: 'PERFEITA',
+  cedo: 'CEDO',
+  tarde: 'TARDE',
+  negada: 'GIRO ALTO',
+}
 
 /**
  * Quanto tempo, no mínimo, o botão de toque fica aceso. É perto do que o
@@ -417,6 +523,11 @@ const COMANDOS_DE_TOQUE: readonly Comando[] = ['left', 'right', 'boost']
  * volante acenderia e apagaria antes de a tela ser pintada.
  */
 const ACESO_MINIMO_MS = 120
+
+/** As teclas de quem pilota: direção, pedais, borboletas e boost. */
+const TECLAS_DE_PILOTAR = [
+  'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyA', 'KeyD', 'KeyW', 'KeyS', 'KeyE', 'KeyQ', 'Space',
+]
 
 /** Janela para o segundo toque que confirma o abandono, a mesma do TIRAR do lobby. */
 const JANELA_DO_ABANDONO_MS = 3_000
@@ -431,6 +542,10 @@ function RaceCanvas({
   difficulty,
   now,
   mode = 'solo',
+  recorde = null,
+  onRestart,
+  modificador = null,
+  competitivo = false,
   espectadores = 0,
   connectionNotice = null,
   onTelemetry,
@@ -442,17 +557,25 @@ function RaceCanvas({
   const comandosRef = useRef(new Comandos())
   /** Os controles de toque, cujos botões acendem pelo comando e não pelo `:active`. */
   const controlesRef = useRef<HTMLDivElement>(null)
-  const acesoRef = useRef<Record<Comando, { desde: number; timer: number }>>({
+  const acesoRef = useRef<Record<BotaoDeToque, { desde: number; timer: number }>>({
     left: { desde: 0, timer: 0 },
     right: { desde: 0, timer: 0 },
     boost: { desde: 0, timer: 0 },
+    throttle: { desde: 0, timer: 0 },
+    brake: { desde: 0, timer: 0 },
+    shiftUp: { desde: 0, timer: 0 },
+    shiftDown: { desde: 0, timer: 0 },
   })
+  /** As luzes do volante e o número da marcha: acesos a cada quadro, sem passar pelo React. */
+  const luzesRef = useRef<HTMLDivElement>(null)
+  const marchaRef = useRef<HTMLElement>(null)
   /** Onde terminam ‹ e começa ›, medidos quando o dedo desce. */
   const vaoDasSetasRef = useRef({ fimDaEsquerda: 0, inicioDaDireita: 0 })
   const clockRef = useRef(now ?? Date.now)
   const finishRef = useRef(onFinish)
   // Na arquibancada não há carro próprio: o easter egg só vale para quem pilota.
-  const turbo = espectador ? 1 : turboDoPiloto(pilotName, car)
+  // Nem onde há ponto, troféu ou quadro em jogo: lá o servidor também o ignora.
+  const turbo = espectador || competitivo || mode === 'contrarrelogio' ? 1 : turboDoPiloto(pilotName, car)
   const raceRef = useRef(createRaceState(difficulty, turbo))
   const startedRef = useRef(false)
   const doneRef = useRef(false)
@@ -466,10 +589,33 @@ function RaceCanvas({
   const [rival, setRival] = useState<RivalHud | null>(null)
   const [phase, setPhase] = useState<RacePhase>('countdown')
   const [countdownLight, setCountdownLight] = useState(0)
-  const [flash, setFlash] = useState<string | null>(null)
+  /** O aviso curto da vez: uma batida é alerta; um mini-turbo, prêmio. Cada tipo mora de um lado. */
+  const [flash, setFlash] = useState<{ texto: string; tipo: 'alerta' | 'premio' } | null>(null)
+  /** O câmbio desta corrida: manual, com as borboletas e a troca perfeita, ou automático. */
+  const [cambioManual, setCambioManual] = useState(() => lerCambio() === 'manual')
+  /** Aparelho de toque: o pé fica no fundo sozinho e o freio mora ao lado do boost. */
+  const [deToque] = useState(aparelhoDeToque)
+  /** A última troca de marcha que merece comentário, e quantas trocas perfeitas vieram seguidas. */
+  const [notaDaTroca, setNotaDaTroca] = useState<{ qualidade: QualidadeDaTroca | 'negada'; vez: number } | null>(null)
+  const [trocaPerfeita, setTrocaPerfeita] = useState<{ sequencia: number; vez: number } | null>(null)
   const [motivoDoReset, setMotivoDoReset] = useState<ResetReason>('crashes')
   /** Tangências feitas na prova: cada uma reinicia o aviso dela. */
   const [tangencias, setTangencias] = useState(0)
+  /** O que a última tangência devolveu, e em que ponto da sequência ela caiu. */
+  const [ultimaTangencia, setUltimaTangencia] = useState({ boost: APEX_BOOST, sequencia: 1 })
+  /** A última parcial: o setor, o tempo dele e a diferença para o recorde. */
+  const [parcial, setParcial] = useState<{ setor: number; tempo: number; delta: number | null } | null>(null)
+  /**
+   * Quem decide a largada turbo. Ouve o boost pelas teclas, com o instante
+   * exato do aperto, e pelo quadro, para o apagar das luzes e o fim da janela.
+   */
+  const juizRef = useRef(new JuizDaLargada())
+  /** Teclado ou toque: o último comando que chegou. */
+  const dispositivoRef = useRef<'teclado' | 'toque'>('teclado')
+  /** Largada decidida fora do laço de quadro, esperando o quadro aplicá-la. */
+  const largadaPendenteRef = useRef<Largada | null>(null)
+  const startAtRef = useRef(startAt)
+  startAtRef.current = startAt
   const [lateStart, setLateStart] = useState(0)
   const audioRef = useRef<RaceAudio | null>(null)
   const [mudo, setMudo] = useState(lerSomDesligado)
@@ -493,13 +639,36 @@ function RaceCanvas({
   /** Instante do último passo de física: sem ele, a aba parada mandaria velocidade de corrida. */
   const ultimoPassoRef = useRef(0)
 
+  /**
+   * O recorde corre como mais um fantasma, com o carro do próprio piloto, e
+   * larga no mesmo apagar de luzes. Não deixa esteira.
+   */
+  const fantasmaDoRecorde = useMemo(
+    () => (recorde ? new ReproducaoDeVolta(recorde.gravacao, startAt) : null),
+    [recorde, startAt],
+  )
+  const recordeRef = useRef(fantasmaDoRecorde)
+  recordeRef.current = fantasmaDoRecorde
+  const rivaisDaPista = useMemo<RaceRival[]>(
+    () =>
+      fantasmaDoRecorde
+        ? [
+            ...rivals,
+            { id: 'recorde', name: recorde?.nome ?? 'SEU RECORDE', car, connected: true, ghost: fantasmaDoRecorde, semVacuo: true },
+          ]
+        : rivals,
+    [rivals, fantasmaDoRecorde, car, recorde?.nome],
+  )
+  const restartRef = useRef(onRestart)
+  restartRef.current = onRestart
+
   const pilotNameRef = useRef(pilotName)
   pilotNameRef.current = pilotName
   modeRef.current = mode
   autoLiderRef.current = autoLider
   clockRef.current = now ?? Date.now
   finishRef.current = onFinish
-  rivalsRef.current = rivals
+  rivalsRef.current = rivaisDaPista
   carRef.current = car
   sendTelemetryRef.current = onTelemetry
   trackSeedRef.current = trackSeed
@@ -560,6 +729,40 @@ function RaceCanvas({
     audioRef.current?.proximaFaixa()
   }, [])
 
+  /**
+   * Troca entre o câmbio manual e o automático. Vale na hora: os comandos
+   * levam o câmbio em todo quadro, e o registro da volta guarda quando ele
+   * mudou — o servidor refaz a volta com a troca no mesmo quadro.
+   */
+  const definirCambioManual = useCallback((manual: boolean) => {
+    comandosRef.current.manual = manual
+    definirCambio(manual ? 'manual' : 'automatico')
+    setCambioManual(manual)
+  }, [])
+
+  const alternarCambio = useCallback(() => {
+    definirCambioManual(!comandosRef.current.manual)
+  }, [definirCambioManual])
+
+  // Os comandos nascem com o câmbio escolhido e, no aparelho de toque, com o
+  // pé no fundo: os dois polegares já têm o que fazer.
+  useEffect(() => {
+    comandosRef.current.manual = lerCambio() === 'manual'
+    comandosRef.current.aceleradorAutomatico = aparelhoDeToque()
+  }, [])
+
+  // As etiquetas da troca somem sozinhas.
+  useEffect(() => {
+    if (!notaDaTroca) return
+    const timer = window.setTimeout(() => setNotaDaTroca(null), 700)
+    return () => window.clearTimeout(timer)
+  }, [notaDaTroca])
+  useEffect(() => {
+    if (!trocaPerfeita) return
+    const timer = window.setTimeout(() => setTrocaPerfeita(null), 900)
+    return () => window.clearTimeout(timer)
+  }, [trocaPerfeita])
+
   /** Quem a câmera está seguindo neste quadro, escolhido ou automático. */
   const seguidoIdRef = useRef<string | null>(null)
 
@@ -593,6 +796,17 @@ function RaceCanvas({
     return () => window.clearTimeout(timer)
   }, [faixaNoAr])
 
+  /**
+   * O boost vai ao juiz da largada no instante em que muda, e não no quadro
+   * seguinte: a janela da perfeita é de poucos quadros. A tecla e o dedo chegam
+   * por caminhos diferentes, e os dois passam por aqui depois de mexer nos
+   * comandos.
+   */
+  const observarBoost = useCallback(() => {
+    const decisao = juizRef.current.observar(comandosRef.current.segurando('boost'), clockRef.current() - startAtRef.current)
+    if (decisao) largadaPendenteRef.current = decisao
+  }, [])
+
   // O ABANDONAR mora ao lado do RÁDIO, e abandonar não tem volta: o primeiro
   // toque só arma o botão, como o TIRAR do lobby. Armado, ele desarma sozinho.
   useEffect(() => {
@@ -611,7 +825,7 @@ function RaceCanvas({
   }
 
   const botao = useCallback(
-    (comando: Comando) => controlesRef.current?.querySelector<HTMLButtonElement>(`[data-comando="${comando}"]`) ?? null,
+    (comando: BotaoDeToque) => controlesRef.current?.querySelector<HTMLButtonElement>(`[data-comando="${comando}"]`) ?? null,
     [],
   )
 
@@ -621,7 +835,7 @@ function RaceCanvas({
    * botão de onde o dedo saiu. O toque rápido fica aceso um instante mínimo,
    * senão acenderia e apagaria antes de a tela ser pintada.
    */
-  const acender = useCallback((comando: Comando) => {
+  const acender = useCallback((comando: BotaoDeToque) => {
     const aceso = acesoRef.current[comando]
     window.clearTimeout(aceso.timer)
     aceso.timer = 0
@@ -629,22 +843,28 @@ function RaceCanvas({
     botao(comando)?.setAttribute('data-on', '')
   }, [botao])
 
+  /** A borboleta não se segura: nenhum dedo a mantém acesa. */
+  const seguraAceso = useCallback(
+    (comando: BotaoDeToque) => comando !== 'shiftUp' && comando !== 'shiftDown' && comandosRef.current.dedoEm(comando),
+    [],
+  )
+
   /** O dedo que desliza para a outra seta apaga a de origem na hora: não houve toque rápido ali. */
-  const apagarSeSolto = useCallback((comando: Comando, naHora = false) => {
-    if (comandosRef.current.dedoEm(comando)) return
+  const apagarSeSolto = useCallback((comando: BotaoDeToque, naHora = false) => {
+    if (seguraAceso(comando)) return
     const aceso = acesoRef.current[comando]
     const apagar = () => {
       aceso.timer = 0
-      if (!comandosRef.current.dedoEm(comando)) botao(comando)?.removeAttribute('data-on')
+      if (!seguraAceso(comando)) botao(comando)?.removeAttribute('data-on')
     }
     window.clearTimeout(aceso.timer)
     const falta = naHora ? 0 : ACESO_MINIMO_MS - (performance.now() - aceso.desde)
     if (falta > 0) aceso.timer = window.setTimeout(apagar, falta)
     else apagar()
-  }, [botao])
+  }, [botao, seguraAceso])
 
   const apagarTodos = useCallback(() => {
-    for (const comando of COMANDOS_DE_TOQUE) {
+    for (const comando of BOTOES_DE_TOQUE) {
       window.clearTimeout(acesoRef.current[comando].timer)
       acesoRef.current[comando].timer = 0
       botao(comando)?.removeAttribute('data-on')
@@ -654,6 +874,7 @@ function RaceCanvas({
   const soltarDedo = (event: ReactPointerEvent<HTMLButtonElement>) => {
     const comando = comandosRef.current.dedoSubiu(event.pointerId)
     if (comando) apagarSeSolto(comando)
+    if (comando === 'boost') observarBoost()
   }
 
   /**
@@ -663,9 +884,13 @@ function RaceCanvas({
   const holdControl = (comando: Comando) => ({
     'data-comando': comando,
     onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => {
+      dispositivoRef.current = 'toque'
+      // Quem pilota pelo toque não tem pedal: o pé volta ao fundo sozinho.
+      comandosRef.current.aceleradorAutomatico = true
       comandosRef.current.dedoDesceu(event.pointerId, comando)
       acender(comando)
-      if (comando !== 'boost') {
+      if (comando === 'boost') observarBoost()
+      if (comando === 'left' || comando === 'right') {
         // As bordas de dentro das setas, para o dedo que deslizar de uma para a outra.
         const esquerda = botao('left')?.getBoundingClientRect()
         const direita = botao('right')?.getBoundingClientRect()
@@ -696,6 +921,18 @@ function RaceCanvas({
     onLostPointerCapture: soltarDedo,
   })
 
+  /** A borboleta de toque: cada toque troca uma marcha, e o botão pisca um instante. */
+  const tocarBorboleta = (qual: Borboleta) => ({
+    'data-comando': qual,
+    onPointerDown: () => {
+      dispositivoRef.current = 'toque'
+      comandosRef.current.aceleradorAutomatico = true
+      comandosRef.current.borboleta(qual)
+      acender(qual)
+      apagarSeSolto(qual)
+    },
+  })
+
   // O áudio só destrava num gesto que o navegador aceita — soltar o dedo,
   // clicar ou teclar; o toque que desce não conta. Quem chega pelo link da
   // arquibancada, ou recarrega a página, abre a corrida sem gesto nenhum: o
@@ -713,7 +950,8 @@ function RaceCanvas({
 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
-      if (['ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) event.preventDefault()
+      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'].includes(event.code)) event.preventDefault()
+      if (TECLAS_DE_PILOTAR.includes(event.code)) dispositivoRef.current = 'teclado'
       // Na arquibancada as setas trocam de piloto, e o L volta para o líder.
       if (modeRef.current === 'espectador') {
         if (event.repeat) return
@@ -726,15 +964,44 @@ function RaceCanvas({
       const comandos = comandosRef.current
       if (event.code === 'ArrowLeft' || event.code === 'KeyA') comandos.tecla('left', true)
       if (event.code === 'ArrowRight' || event.code === 'KeyD') comandos.tecla('right', true)
-      if (event.code === 'Space') comandos.tecla('boost', true)
+      if (event.code === 'Space') {
+        comandos.tecla('boost', true)
+        observarBoost()
+      }
+      // Os pedais: quem pisa pelo teclado assume o acelerador.
+      if (event.code === 'ArrowUp' || event.code === 'KeyW') {
+        comandos.aceleradorAutomatico = false
+        comandos.tecla('throttle', true)
+      }
+      if (event.code === 'ArrowDown' || event.code === 'KeyS') {
+        comandos.aceleradorAutomatico = false
+        comandos.tecla('brake', true)
+      }
+      // As borboletas: uma troca por toque, e não enquanto a tecla repete. No
+      // automático, tocar numa delas é pedir o câmbio na mão.
+      if ((event.code === 'KeyE' || event.code === 'KeyQ') && !event.repeat) {
+        if (!comandos.manual) definirCambioManual(true)
+        comandos.borboleta(event.code === 'KeyE' ? 'shiftUp' : 'shiftDown')
+      }
       // R troca a estação: uma vez por toque, e não enquanto a tecla repete.
       if (event.code === 'KeyR' && !event.repeat) audioRef.current?.proximaFaixa()
+      // Backspace recomeça o contrarrelógio na hora, como no Trackmania: tentar
+      // de novo tem de custar menos que desistir da tentativa.
+      if (event.code === 'Backspace' && !event.repeat && restartRef.current) {
+        event.preventDefault()
+        restartRef.current()
+      }
     }
     const up = (event: KeyboardEvent) => {
       const comandos = comandosRef.current
       if (event.code === 'ArrowLeft' || event.code === 'KeyA') comandos.tecla('left', false)
       if (event.code === 'ArrowRight' || event.code === 'KeyD') comandos.tecla('right', false)
-      if (event.code === 'Space') comandos.tecla('boost', false)
+      if (event.code === 'Space') {
+        comandos.tecla('boost', false)
+        observarBoost()
+      }
+      if (event.code === 'ArrowUp' || event.code === 'KeyW') comandos.tecla('throttle', false)
+      if (event.code === 'ArrowDown' || event.code === 'KeyS') comandos.tecla('brake', false)
     }
     // Perder o foco solta teclas e dedos, senão o carro segue virando sozinho.
     // No celular, trocar de app ou apagar a tela nem sempre tira o foco antes
@@ -742,6 +1009,7 @@ function RaceCanvas({
     const release = () => {
       comandosRef.current.soltarTudo()
       apagarTodos()
+      observarBoost()
     }
     const aoSumir = () => {
       if (document.hidden) release()
@@ -758,7 +1026,7 @@ function RaceCanvas({
       window.removeEventListener('pagehide', release)
       document.removeEventListener('visibilitychange', aoSumir)
     }
-  }, [apagarTodos, seguirLider, seguirOutro])
+  }, [apagarTodos, definirCambioManual, observarBoost, seguirLider, seguirOutro])
 
   useEffect(() => {
     // Quem abre a tela depois do instante combinado larga já em atraso.
@@ -775,11 +1043,16 @@ function RaceCanvas({
    */
   useEffect(() => {
     raceRef.current = createRaceState(difficulty, turbo)
+    // O desafio da semana mexe nas regras do nível, e a física corre com elas.
+    if (modificador) raceRef.current.rules = MODIFICADORES[modificador].regras(raceRef.current.rules)
+    juizRef.current = new JuizDaLargada()
+    largadaPendenteRef.current = null
     startedRef.current = false
     doneRef.current = false
     setPhase('countdown')
     setCountdownLight(0)
     setTelemetry(initialTelemetry)
+    setParcial(null)
 
     let timer = 0
     let lightsShown = -1
@@ -818,7 +1091,7 @@ function RaceCanvas({
     return () => {
       if (timer) window.clearInterval(timer)
     }
-  }, [beep, countdownMs, difficulty, som, startAt, turbo])
+  }, [beep, countdownMs, difficulty, modificador, som, startAt, turbo])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -875,6 +1148,40 @@ function RaceCanvas({
     let animationFrame = 0
     const flashTimers: number[] = []
 
+    // O que a prova mostrou, e a volta inteira: viram a análise da tela de
+    // resultado e o fantasma do próximo recorde.
+    const analista = new AnalistaDaCorrida(layout.superCurves)
+    const gravador = new GravadorDeVolta()
+    // Os comandos de cada quadro: o contrarrelógio os manda ao servidor, que
+    // refaz a volta com a mesma física e confere se ela bate com a gravada.
+    const gravadorDeEntradas = new GravadorDeEntradas()
+    let ultimoTempoDeProva: number | null = null
+    let setoresAnunciados = 0
+    /** Tempo de prova agora menos o do recorde no mesmo ponto da pista. */
+    const deltaParaORecorde = (metros: number, tempo: number) => {
+      const referencia = recordeRef.current?.tempoEm(metros) ?? null
+      return referencia === null || metros < 1 ? null : tempo - referencia
+    }
+    /**
+     * A parcial de cada setor, na saída de cada super curva. Com recorde, vem
+     * com a diferença para ele, em verde ou vermelho; sem, só o tempo.
+     */
+    const anunciarParcial = (tempo: number) => {
+      while (setoresAnunciados < analista.setoresCompletos) {
+        const setor = setoresAnunciados
+        setoresAnunciados += 1
+        const fim = analista.setores[setor]
+        // A chegada tem a tela de resultado: a parcial é dos setores do meio.
+        if (fim >= TRACK_LENGTH) continue
+        const referencia = recordeRef.current?.tempoEm(fim) ?? null
+        setParcial({
+          setor: setor + 1,
+          tempo: analista.parcial(setor) ?? tempo,
+          delta: referencia === null ? null : (analista.parcial(setor) ?? tempo) - referencia,
+        })
+      }
+    }
+
     // Intensidades contínuas para a apresentação, derivadas da corrida.
     const feel = createFeel()
 
@@ -887,6 +1194,7 @@ function RaceCanvas({
     const skidRate = new EmissionRate(22)
     const smokeRate = new EmissionRate(30)
     const wallRate = new EmissionRate(40)
+    const cargaRate = new EmissionRate(36)
 
     // Voltar do segundo plano não pode gerar um passo gigante de simulação.
     const resumeClock = () => {
@@ -939,12 +1247,55 @@ function RaceCanvas({
     // do reset saem no mesmo quadro, e o temporizador do primeiro apagaria o
     // segundo antes da hora.
     let avisoAtual = 0
-    const announce = (message: string) => {
+    const announce = (message: string, tipo: 'alerta' | 'premio' = 'alerta') => {
       const este = (avisoAtual += 1)
-      setFlash(message)
+      setFlash({ texto: message, tipo })
       flashTimers.push(window.setTimeout(() => {
         if (avisoAtual === este) setFlash(null)
       }, 1_200))
+    }
+
+    /**
+     * As luzes do volante e o número da marcha, pintados a cada quadro.
+     *
+     * Não passam pelo React: a janela da troca perfeita dura um quarto de
+     * segundo, e o compasso do HUD — um render a cada 80 ms — acenderia as
+     * luzes atrasadas justo onde o atraso custa. Aqui só se mexe no que mudou.
+     */
+    let luzesAcesas = -1
+    let janelaAcesa = false
+    let corteAceso = false
+    let marchaMostrada = -1
+    const pintarCambio = () => {
+      const luzes = luzesRef.current
+      const marcha = marchaRef.current
+      if (!luzes || !marcha) return
+      const parado = race.resetting > 0 || race.afogado > 0 || !startedRef.current
+      const giro = parado ? 0 : race.giro
+      const acesas = Math.max(
+        0,
+        Math.min(LUZES_DO_CAMBIO, Math.ceil(((giro - GIRO_DA_PRIMEIRA_LUZ) / (1 - GIRO_DA_PRIMEIRA_LUZ)) * LUZES_DO_CAMBIO)),
+      )
+      if (acesas !== luzesAcesas) {
+        luzesAcesas = acesas
+        for (let i = 0; i < luzes.children.length; i += 1) luzes.children[i].classList.toggle('on', i < acesas)
+      }
+      // A janela aberta pisca todas as luzes: é a hora de subir.
+      const janela = race.janelaDeTroca && !parado
+      if (janela !== janelaAcesa) {
+        janelaAcesa = janela
+        luzes.toggleAttribute('data-janela', janela)
+      }
+      // Passou da janela, batendo no corte: as luzes piscam em vermelho.
+      const corte = race.noCorte > TOLERANCIA_DO_CORTE
+      if (corte !== corteAceso) {
+        corteAceso = corte
+        luzes.toggleAttribute('data-corte', corte)
+      }
+      if (race.marcha !== marchaMostrada) {
+        marchaMostrada = race.marcha
+        marcha.textContent = String(race.marcha + 1)
+      }
     }
     const NOME_DO_TRANCO: Record<ObstacleKind, string> = {
       barrier: 'BATIDA',
@@ -1608,7 +1959,7 @@ function RaceCanvas({
      * telemetria — mas sai da mesma grandeza: o quanto ele andou de lado
      * desde o quadro anterior. Cor e transparência continuam sendo dele.
      */
-    const drawGhost = (rival: RaceRival, distanceAhead: number, sample: GhostSample, dt: number, etiqueta: string | null) => {
+    const drawGhost = (rival: RaceRival, distanceAhead: number, sample: GhostSample, dt: number, etiqueta: string | null, destaque = false) => {
       const { lateral, speed: velocidade } = sample
       const projected = roadGeometry(distanceAhead)
       const x = projected.center + lateralOffset(lateral, projected.roadWidth)
@@ -1638,10 +1989,16 @@ function RaceCanvas({
       pose.drift = estado.derrapagem
 
       const semSinal = sample.stale || !rival.connected
-      const opacidade = opacidadeDoFantasma(distanceAhead, { semSinal, chegou: sample.state === 'finished' })
+      // A chama do boost sai da telemetria: o rival mandou que está de boost, e
+      // ela acende no fantasma como acende no nosso carro, pela mesma constante.
+      const deBoost = !semSinal && sample.state === 'racing' && sample.boosting === true
+      pose.boost += ((deBoost ? 1 : 0) - pose.boost) * (1 - Math.exp(-Math.max(0, dt) / BOOST_TAU))
+      const opacidade = opacidadeDoFantasma(distanceAhead, { semSinal, chegou: sample.state === 'finished', destaque })
       drawCar(ctx, x, projected.y, scale, rival.car, pose, opacidade, ambiente.nevoaRGB)
       // A etiqueta sai depois da bruma, para o nome de quem vai longe continuar nítido.
-      if (etiqueta) etiquetas.push({ x, chao: projected.y, escala: scale, texto: etiqueta, cor: carById(rival.car).accent, profundidade: distanceAhead })
+      if (etiqueta) {
+        etiquetas.push({ x, chao: projected.y, escala: scale, texto: etiqueta, cor: carById(rival.car).accent, profundidade: distanceAhead, boost: deBoost })
+      }
     }
 
     /** Etiquetas dos fantasmas deste quadro, desenhadas por cima da bruma. */
@@ -1881,6 +2238,8 @@ function RaceCanvas({
         race.progress = seguidoAgora.sample.progress
         race.lateral = seguidoAgora.sample.lateral
         race.speed = seguidoAgora.sample.speed
+        // O boost de quem a câmera segue acende a chama, o rastro e o som dele.
+        race.boosting = seguidoAgora.sample.boosting === true
         race.offRoad = Math.abs(seguidoAgora.sample.lateral) > OFF_ROAD_LIMIT
         carRef.current = seguidoAgora.rival.car
       }
@@ -1888,7 +2247,7 @@ function RaceCanvas({
       // A classificação do quadro: dela saem a etiqueta de cada fantasma, a
       // posição no painel e a lista ao vivo. O próprio piloto entra nela com
       // uma identidade que nenhum rival usa.
-      const naPista: Array<CarroNaProva & { nome: string; carro: CarId; semSinal: boolean }> = rivalSamples.map(({ rival, sample }) => ({
+      const naPista: Array<CarroNaProva & { nome: string; carro: CarId; semSinal: boolean; boost: boolean }> = rivalSamples.map(({ rival, sample }) => ({
         id: rival.id,
         progress: sample.progress,
         speed: sample.speed,
@@ -1897,6 +2256,7 @@ function RaceCanvas({
         nome: rival.name,
         carro: rival.car,
         semSinal: sample.stale || !rival.connected,
+        boost: sample.boosting === true && rival.connected,
       }))
       if (modeRef.current === 'online') {
         naPista.push({
@@ -1908,11 +2268,46 @@ function RaceCanvas({
           nome: pilotNameRef.current,
           carro: carRef.current,
           semSinal: false,
+          boost: !doneRef.current && motorForte(race),
         })
       }
       const ordem = classificar(naPista)
       const posicaoDe = new Map(ordem.map((carro) => [carro.id, carro.posicao]))
       ordemRef.current = ordem.map((carro) => carro.id)
+
+      // A largada turbo: o juiz também ouve o quadro, que é quem vê as luzes
+      // se apagarem com o boost apertado e a janela se fechar sem ele.
+      const decisaoDaLargada = noModoEspectador
+        ? null
+        : juizRef.current.observar(comandosRef.current.segurando('boost'), serverNow - startAt)
+      if (decisaoDaLargada) largadaPendenteRef.current = decisaoDaLargada
+      const largada = largadaPendenteRef.current
+      if (largada && !doneRef.current && !noModoEspectador) {
+        largadaPendenteRef.current = null
+        aplicarLargada(race, largada)
+        analista.registrarLargada(largada)
+        gravadorDeEntradas.registrarLargada(largada)
+        if (largada.queimou) {
+          announce('QUEIMOU A LARGADA!')
+          audioRef.current?.beep(196, 0.3)
+        } else if (largada.nivel > 0) {
+          announce(largada.nivel === 3 ? 'LARGADA PERFEITA!' : largada.nivel === 2 ? 'BOA LARGADA' : 'LARGADA TURBO', 'premio')
+          // As notas saem no relógio do áudio, como os bipes da tangência.
+          for (let i = 0; i < largada.nivel; i += 1) audioRef.current?.beep(660 * 1.26 ** i, 0.06, i * 0.07)
+        }
+      }
+
+      // No grid o motor já está ligado: em volta do giro da largada, ou no giro
+      // dela com o pé no fundo — o ronco de quem espera as luzes apagarem.
+      if (!startedRef.current) {
+        audioRef.current?.update({
+          speed: 0,
+          boost: 0,
+          offRoad: 0,
+          running: false,
+          acelerador: !noModoEspectador && comandosRef.current.segurando('throttle'),
+        })
+      }
 
       if (startedRef.current && !doneRef.current) {
         const elapsed = Math.max(0, (serverNow - startAt) / 1000)
@@ -1923,17 +2318,34 @@ function RaceCanvas({
         // O traçado preenche a curva, a linha e a zebra da tangência de uma vez.
         layout.fillContext(race.progress, raceContext)
         raceContext.slipstream = rivalSamples.reduce(
-          (melhor, { sample }) =>
-            sample.state === 'racing'
+          (melhor, { rival, sample }) =>
+            sample.state === 'racing' && !rival.semVacuo
               ? Math.max(melhor, slipstreamFrom(race.progress, race.lateral, sample.progress, sample.lateral))
               : melhor,
           0,
         )
+        // A física recebe o passo arredondado ao microssegundo, o mesmo que vai
+        // no registro: é o que deixa o servidor refazer a volta passo a passo.
+        const passoDaFisica = quantizarPasso(dt)
+        // O relógio da prova anda mesmo com a aba escondida; a física, não.
+        const salto = ultimoTempoDeProva === null ? 0 : elapsed - ultimoTempoDeProva - passoDaFisica
+        ultimoTempoDeProva = elapsed
         // Quem assiste não pilota: a física é a do carro seguido, que chega pela
         // telemetria. O resto do quadro — câmera, som, efeitos, painel — segue igual.
-        const eventos = noModoEspectador ? [] : advanceRace(race, entrada, dt, raceContext)
-        if (!noModoEspectador) ultimoPassoRef.current = performance.now()
-        for (const event of eventos) {
+        // O quadro inteiro vai à física, em passos iguais de até 0,05 s: o
+        // celular lento não pode andar menos que o relógio. O servidor refaz a
+        // volta pelo mesmo caminho, com o mesmo passo registrado.
+        if (!noModoEspectador) gravadorDeEntradas.registrar(passoDaFisica, entrada, salto > 0.1 ? salto : 0)
+        const eventosDoQuadro = noModoEspectador ? [] : advanceRace(race, entrada, passoDaFisica, raceContext)
+        if (!noModoEspectador) {
+          ultimoPassoRef.current = performance.now()
+          // O analista e o gravador leem o quadro antes dos avisos: a chegada
+          // fecha a análise e a volta gravada no mesmo quadro em que acontece.
+          analista.observar(race, eventosDoQuadro, Math.min(passoDaFisica, MAX_FRAME_SECONDS), elapsed)
+          gravador.gravar(elapsed * 1000, race)
+          anunciarParcial(elapsed)
+        }
+        for (const event of eventosDoQuadro) {
           if (event.type === 'collision') {
             const kind = race.rules.obstacles.find((o) => o.id === event.obstacleId)?.kind ?? 'barrier'
             // A batida conta para o reset, e o piloto precisa ver a conta antes
@@ -1969,14 +2381,50 @@ function RaceCanvas({
             registerImpact(feel)
           }
           if (event.type === 'apex') {
-            // A tangência é o único prêmio da pista: aparece por cima de tudo,
+            // A tangência é o maior prêmio da pista: aparece por cima de tudo,
             // e some sozinha, sem disputar com os avisos de batida.
+            setUltimaTangencia({ boost: event.boost, sequencia: event.sequencia })
             setTangencias((vezes) => vezes + 1)
             // Dois bipes subindo: o som de acerto, o oposto do tranco da batida.
-            // O segundo sai no relógio do áudio, 80 ms exatos depois: num
-            // temporizador, o celular lento o atrasaria um quadro ou mais.
+            // Na sequência, o segundo sobe mais: o ouvido acompanha a conta. Ele
+            // sai no relógio do áudio, 80 ms exatos depois: num temporizador, o
+            // celular lento o atrasaria um quadro ou mais.
             audioRef.current?.beep(880, 0.07)
-            audioRef.current?.beep(1_320, 0.1, 0.08)
+            audioRef.current?.beep(1_320 * 1.12 ** Math.min(event.sequencia - 1, 2), 0.1, 0.08)
+          }
+          if (event.type === 'carga') {
+            // Cada nível da carga tem a sua nota, subindo: dá para carregar de
+            // ouvido, sem tirar o olho da curva.
+            audioRef.current?.beep([0, 660, 880, 1_175][event.nivel] ?? 1_175, 0.05)
+          }
+          if (event.type === 'miniTurbo') {
+            if (event.nivel >= 2) announce(`MINI-TURBO ${'I'.repeat(event.nivel)}`, 'premio')
+            audioRef.current?.beep(520 + event.nivel * 180, 0.09)
+            // O estouro sai das rodas de trás, na cor do nível que disparou.
+            effects.burst('spark', 4 + event.nivel * 4, race.progress + CAR_VIEW_DISTANCE - TRAIL_SETBACK, race.lateral, {
+              drift: 1,
+              life: 0.3,
+              tint: COR_DA_CARGA[event.nivel],
+            })
+          }
+          if (event.type === 'troca') {
+            // A troca perfeita é prêmio: o aviso do lado dos prêmios, a
+            // etiqueta ao lado da marcha e duas notas subindo, a segunda mais
+            // alta na sequência — dá para acertar a largada inteira de ouvido.
+            if (event.qualidade === 'perfeita') {
+              setTrocaPerfeita({ sequencia: event.sequencia, vez: frame })
+              audioRef.current?.beep(1_046, 0.05)
+              audioRef.current?.beep(1_568 * 1.06 ** Math.min(event.sequencia - 1, 5), 0.07, 0.05)
+            }
+            if (NOTA_DA_TROCA[event.qualidade]) setNotaDaTroca({ qualidade: event.qualidade, vez: frame })
+          }
+          if (event.type === 'reducaoNegada') {
+            setNotaDaTroca({ qualidade: 'negada', vez: frame })
+            audioRef.current?.beep(220, 0.05)
+          }
+          if (event.type === 'raspao') {
+            announce(`RASPÃO +${RASPAO_BOOST}%`, 'premio')
+            audioRef.current?.beep(1_480, 0.04)
           }
           if (event.type === 'reset') {
             setMotivoDoReset(event.reason)
@@ -1998,6 +2446,10 @@ function RaceCanvas({
               topSpeed: race.topSpeed / race.rules.turbo,
               collisions: race.collisions,
               lateStart: lateAtStart,
+              analise: analista.resultado(),
+              gravacao: gravador.terminar(elapsed * 1000, race),
+              dispositivo: dispositivoRef.current,
+              entradas: gravadorDeEntradas.terminar(),
             }
             setTelemetry((current) => ({ ...current, progress: TRACK_LENGTH, elapsed, speed: 0 }))
             // O rival precisa saber imediatamente que o carro parou na chegada.
@@ -2007,6 +2459,7 @@ function RaceCanvas({
               lateral: race.lateral,
               speed: 0,
               state: 'finished',
+              boosting: false,
             })
             flashTimers.push(window.setTimeout(() => finishRef.current(result), 850))
           }
@@ -2020,12 +2473,25 @@ function RaceCanvas({
 
         // O som lê as mesmas intensidades que a imagem: motor, vento e
         // cascalho saem de `feel`, não de uma segunda leitura da corrida.
-        audioRef.current?.update({
-          speed: feel.speed,
-          boost: feel.boost,
-          offRoad: feel.offRoad,
-          running: true,
-        })
+        // Com carro próprio, o motor segue o câmbio da física: a marcha, o giro,
+        // o pé e o corte. Parado no reset ou afogado, o motor fica na primeira,
+        // com a embreagem no ponto. Na arquibancada, só a velocidade é conhecida.
+        const parado = race.resetting > 0 || race.afogado > 0
+        audioRef.current?.update(
+          noModoEspectador
+            ? { speed: feel.speed, boost: feel.boost, offRoad: feel.offRoad, running: true }
+            : {
+                speed: feel.speed,
+                boost: feel.boost,
+                offRoad: feel.offRoad,
+                running: true,
+                marcha: parado ? 0 : race.marcha,
+                giro: parado ? 0 : race.giro,
+                acelerador: race.acelerando,
+                freando: race.freando,
+                noCorte: race.noCorte > 0,
+              },
+        )
 
         // A câmera baixa um pouco com a velocidade, inclina no esterço e leva
         // um tranco curto no impacto. Tudo contínuo, limitado e proporcional
@@ -2073,7 +2539,20 @@ function RaceCanvas({
           })
         }
 
-        for (let i = boostRate.take(passo, race.boosting, feel.boost); i > 0; i -= 1) {
+        // Faíscas da carga, das rodas de trás, na cor e no tamanho do nível:
+        // azul, laranja e roxo, cada um maior que o anterior, para o nível
+        // ler também por quem não distingue as cores.
+        for (let i = cargaRate.take(passo, race.carga > 0, 0.4 + race.nivelCarga * 0.3); i > 0; i -= 1) {
+          const roda = Math.random() < 0.5 ? -1 : 1
+          effects.spawn('spark', rastro, race.lateral + roda * WHEEL_OFFSET, {
+            drift: -race.ladoDaCarga * (0.4 + Math.random() * 0.6),
+            size: 2 + race.nivelCarga * 1.6 + Math.random() * 1.5,
+            life: 0.18 + race.nivelCarga * 0.05,
+            tint: COR_DA_CARGA[race.nivelCarga],
+          })
+        }
+
+        for (let i = boostRate.take(passo, motorForte(race), feel.boost); i > 0; i -= 1) {
           const roda = Math.random() < 0.5 ? -1 : 1
           effects.spawn('boost', rastro, race.lateral + roda * WHEEL_OFFSET, {
             size: 6 + feel.boost * 4,
@@ -2143,9 +2622,17 @@ function RaceCanvas({
             resetting: race.resetting,
             resets: race.resets,
             nota: notaDaProximaCurva(),
+            carga: race.carga,
+            nivelCarga: race.nivelCarga,
+            impulso: race.impulso > 0,
+            delta: deltaParaORecorde(race.progress, elapsed),
+            noCorte: race.noCorte,
+            acelerando: race.acelerando,
           })
         }
       }
+
+      if (!noModoEspectador) pintarCambio()
 
       // A simulação já avançou: a partir daqui o quadro inteiro usa o mesmo
       // progresso, e portanto a mesma curva de referência.
@@ -2189,7 +2676,17 @@ function RaceCanvas({
       const fantasmasColados = fantasmas
         .filter(({ ahead }) => ahead > PROFUNDIDADE_MINIMA_DO_FANTASMA && ahead < CAR_VIEW_DISTANCE)
         .sort((a, b) => b.ahead - a.ahead)
-      const etiquetaDe = (rival: RaceRival) => `P${posicaoDe.get(rival.id) ?? '?'} ${nomeDaEtiqueta(rival.name)}`
+      // A hierarquia vale para os que estão à vista, à frente: os colados atrás
+      // passam por cima do nosso carro e continuam translúcidos, sem etiqueta.
+      const hierarquia = hierarquiaDosFantasmas(
+        fantasmasVisiveis.map(({ rival, ahead }) => ({ id: rival.id, distancia: ahead - CAR_VIEW_DISTANCE, recorde: rival.semVacuo === true })),
+      )
+      const destaqueDe = (rival: RaceRival) => hierarquia.get(rival.id)?.destaque ?? false
+      const etiquetaDe = (rival: RaceRival) => {
+        if (rival.semVacuo) return nomeDaEtiqueta(rival.name)
+        const posicao = `P${posicaoDe.get(rival.id) ?? '?'}`
+        return hierarquia.get(rival.id)?.comNome === false ? posicao : `${posicao} ${nomeDaEtiqueta(rival.name)}`
+      }
 
       // Os obstáculos já estão em ordem de distância, então basta percorrer do
       // fim para o começo — do mais distante para o mais próximo — sem montar
@@ -2204,14 +2701,14 @@ function RaceCanvas({
 
         while (fantasmasVisiveis[proximoFantasma]?.ahead > ahead) {
           const fantasma = fantasmasVisiveis[proximoFantasma]
-          drawGhost(fantasma.rival, fantasma.ahead, fantasma.sample, dt, etiquetaDe(fantasma.rival))
+          drawGhost(fantasma.rival, fantasma.ahead, fantasma.sample, dt, etiquetaDe(fantasma.rival), destaqueDe(fantasma.rival))
           proximoFantasma += 1
         }
         drawObstacle(ahead, obstaculo.lane, obstaculo.kind, obstaculo.id)
       }
       while (proximoFantasma < fantasmasVisiveis.length) {
         const fantasma = fantasmasVisiveis[proximoFantasma]
-        drawGhost(fantasma.rival, fantasma.ahead, fantasma.sample, dt, etiquetaDe(fantasma.rival))
+        drawGhost(fantasma.rival, fantasma.ahead, fantasma.sample, dt, etiquetaDe(fantasma.rival), destaqueDe(fantasma.rival))
         proximoFantasma += 1
       }
 
@@ -2242,6 +2739,7 @@ function RaceCanvas({
             stale: maisProximo.sample.stale,
             finished: maisProximo.sample.state === 'finished',
             onScreen: visivel,
+            boosting: maisProximo.sample.boosting === true && maisProximo.rival.connected,
           })
         }
       }
@@ -2261,6 +2759,7 @@ function RaceCanvas({
             semSinal: carro.semSinal,
             destaque: carro.id === referencia?.id,
             fracao: Math.min(1, carro.progress / TRACK_LENGTH),
+            boost: carro.boost && carro.state === 'racing',
           })),
         )
         if (noModoEspectador) {
@@ -2336,6 +2835,9 @@ function RaceCanvas({
         poseDoJogador.steer = feel.steer * forcaDoMovimento
         poseDoJogador.drift = derrapagemDoJogador
         poseDoJogador.boost = feel.boost
+        // Freando, a luz de chuva pisca quatro vezes por segundo — a de um
+        // Fórmula 1 recuperando energia. Na arquibancada não se sabe quem freia.
+        poseDoJogador.freio = race.freando && !noModoEspectador ? (Math.floor(frame / 125) % 2 === 0 ? 1 : 0.2) : 0
         poseDoJogador.travel = race.progress * forcaDoMovimento
         poseDoJogador.dirt = feel.dirt
         // Três tremores, com frequências separadas para não virarem um só: a
@@ -2432,6 +2934,7 @@ function RaceCanvas({
         lateral: race.lateral,
         speed: parado ? 0 : race.speed / race.rules.turbo,
         state: 'racing',
+        boosting: !parado && motorForte(race),
       })
     }, TELEMETRY_INTERVAL_MS)
     return () => window.clearInterval(timer)
@@ -2456,6 +2959,50 @@ function RaceCanvas({
   }
   /** Ganho máximo do vácuo nesta dificuldade, para o HUD mostrar em km/h. */
   const bonusDoVacuo = rulesFor(difficulty).slipstreamBonus
+
+  /** A próxima super curva, enquanto a nota dela vale para quem pilota. */
+  const nota = !espectador && phase === 'racing' && telemetry.resetting === 0 ? telemetry.nota : null
+  /** A nota de curva, na coluna do lado para onde a pista vai. Antes da curva ela diz o que fazer; dentro, diz para segurar. */
+  const notaDeCurva = nota && (
+    <div
+      className={`pace-note ${nota.lado > 0 ? 'right' : 'left'} ${nota.dentro ? 'inside' : ''} ${!nota.dentro && nota.metros < 90 ? 'close' : ''}`}
+      role="status"
+    >
+      <b className="pace-arrows" aria-hidden="true">
+        {nota.lado > 0 ? '›››' : '‹‹‹'}
+        {nota.depois !== 0 && <i>{nota.depois > 0 ? ' ›››' : ' ‹‹‹'}</i>}
+      </b>
+      <span className="pace-name">
+        {nota.nome} <em>{nota.graus}°</em>
+      </span>
+      <small>
+        {nota.dentro
+          ? `SEGURE ${nota.lado > 0 ? 'À DIREITA' : 'À ESQUERDA'}`
+          : telemetry.boosting
+            ? 'SOLTE O BOOST'
+            : `${nota.metros} M · ENTRE POR DENTRO`}
+      </small>
+    </div>
+  )
+
+  /**
+   * O que a tela lembra a quem esqueceu um comando: subir a marcha quando o
+   * motor já bate no corte há um segundo, ou pisar no acelerador, parado na
+   * largada. No toque o pé já está no fundo, e o lembrete do pedal não vale.
+   */
+  const lembrete =
+    espectador || phase !== 'racing' || telemetry.resetting > 0
+      ? null
+      : cambioManual && telemetry.noCorte > LEMBRETE_DO_CORTE_S
+        ? `SUBA A MARCHA · ${deToque ? '▲' : 'E'}`
+        : !deToque && !telemetry.acelerando && telemetry.speed < 1 && telemetry.elapsed > LEMBRETE_DO_PEDAL_S
+          ? 'ACELERE · W OU ↑'
+          : null
+
+  /** Os comandos, ditos na contagem: é o único momento em que o piloto tem tempo de ler. */
+  const dicaDosComandos = deToque
+    ? `O CARRO ACELERA SOZINHO · FREIO AO LADO DO BOOST${cambioManual ? ' · ▲ ▼ TROCAM A MARCHA' : ''}`
+    : `W ACELERA · S FREIA · ${cambioManual ? 'E SOBE E Q REDUZ A MARCHA' : 'CÂMBIO AUTOMÁTICO'}`
 
   return (
     <main className="race-shell">
@@ -2505,6 +3052,11 @@ function RaceCanvas({
               {abandonoArmado ? 'CONFIRMAR' : 'ABANDONAR'}
             </button>
           )}
+          {onRestart && (
+            <button className="abandon-button restart-button" onClick={onRestart} title="Recomeçar (Backspace)">
+              RECOMEÇAR ⌫
+            </button>
+          )}
         </div>
         <div className="pilot-tag">
           <span>{espectador ? 'CÂMERA NO CARRO DE' : 'PILOTO'}</span>
@@ -2525,17 +3077,60 @@ function RaceCanvas({
         <div className="position-block">
           <span>{espectador ? 'CÂMERA' : mode === 'online' && rival ? 'POSIÇÃO' : 'MODO'}</span>
           <strong>
-            {espectador ? (seguido ? `P${seguido.posicao}` : 'GRID') : mode === 'online' ? (rival?.position ?? 'GRID') : 'SOLO'}
+            {espectador ? (seguido ? `P${seguido.posicao}` : 'GRID') : mode === 'online' ? (rival?.position ?? 'GRID') : mode === 'contrarrelogio' ? 'RELÓGIO' : 'SOLO'}
           </strong>
-          <em className="difficulty-tag">{DIFFICULTY_LABELS[difficulty]}</em>
+          <em className="difficulty-tag">
+            {DIFFICULTY_LABELS[difficulty]}
+            {modificador && modificador !== 'classico' && modificador !== 'profissional' ? ` · ${MODIFICADORES[modificador].nome}` : ''}
+          </em>
         </div>
         <div className="timer-block">
           <span>TEMPO DE CORRIDA</span>
           <strong>{formatTime(telemetry.elapsed)}</strong>
+          {/* O delta contra o recorde, no mesmo ponto da pista: verde é ganho. */}
+          {telemetry.delta !== null && phase === 'racing' && (
+            <em className={`recorde-delta ${telemetry.delta <= 0 ? 'ganho' : 'perda'}`}>
+              {formatarDelta(telemetry.delta)} <small>{recorde?.nome ? recorde.nome.toUpperCase() : 'RECORDE'}</small>
+            </em>
+          )}
         </div>
+        {/* O volante de Fórmula 1: as luzes do giro em cima, a marcha e a
+            velocidade embaixo. As luzes e a marcha são pintadas a cada quadro
+            pelo laço da corrida, e não pelo React. */}
         <div className="speed-block">
-          <strong>{Math.round(telemetry.speed)}</strong>
-          <span>KM/H</span>
+          {!espectador && (
+            <div ref={luzesRef} className="luzes" aria-hidden="true">
+              {Array.from({ length: LUZES_DO_CAMBIO }, (_, i) => <i key={i} />)}
+            </div>
+          )}
+          {!espectador && (
+            <div className="marcha-bloco">
+              <b ref={marchaRef} className="marcha" aria-hidden="true">1</b>
+              <button
+                type="button"
+                className={`modo-do-cambio ${cambioManual ? 'manual' : ''}`}
+                onClick={(event) => {
+                  alternarCambio()
+                  // Sem foco no botão: o espaço é o boost, e não um clique nele.
+                  event.currentTarget.blur()
+                }}
+                aria-pressed={cambioManual}
+                aria-label={cambioManual ? 'Câmbio manual: trocar para o automático' : 'Câmbio automático: trocar para o manual'}
+                title={cambioManual ? 'Câmbio manual (E sobe, Q reduz). Clique para o automático.' : 'Câmbio automático. Clique para o manual.'}
+              >
+                {cambioManual ? 'MANUAL' : 'AUTO'}
+              </button>
+              {notaDaTroca && (
+                <em key={notaDaTroca.vez} className={`nota-da-troca ${notaDaTroca.qualidade}`}>
+                  {NOTA_DA_TROCA[notaDaTroca.qualidade]}
+                </em>
+              )}
+            </div>
+          )}
+          <div className="velocidade">
+            <strong>{Math.round(telemetry.speed)}</strong>
+            <span>KM/H</span>
+          </div>
         </div>
       </section>
 
@@ -2585,7 +3180,7 @@ function RaceCanvas({
             return (
               <li
                 key={linha.id}
-                className={`${linha.destaque ? 'destaque' : ''} ${linha.semSinal ? 'sem-sinal' : ''} ${linha.chegou ? 'chegou' : ''}`}
+                className={`${linha.destaque ? 'destaque' : ''} ${linha.semSinal ? 'sem-sinal' : ''} ${linha.chegou ? 'chegou' : ''} ${linha.boost ? 'boost' : ''}`}
                 style={{ '--cor': carById(linha.carro).accent } as CSSProperties}
               >
                 {espectador ? (
@@ -2602,9 +3197,27 @@ function RaceCanvas({
       )}
 
       {!espectador && (
-        <div className={`boost-meter ${telemetry.boosting ? 'active' : ''} ${telemetry.boostLocked ? 'empty' : ''}`}>
+        <div className={`boost-meter ${telemetry.boosting || telemetry.impulso ? 'active' : ''} ${telemetry.boostLocked ? 'empty' : ''}`}>
           <div className="boost-copy"><span>BOOST</span><b>{Math.round(telemetry.boost)}%</b></div>
           <div className="boost-track"><i style={{ width: `${telemetry.boost}%` }} /></div>
+        </div>
+      )}
+
+      {/* A carga do mini-turbo só aparece enquanto existe: três degraus, cada
+          um maior e na cor do nível, que é o que as faíscas do carro mostram. */}
+      {phase === 'racing' && telemetry.carga > 0 && (
+        <div className={`carga-meter nivel-${telemetry.nivelCarga}`} role="status" aria-label={`Mini-turbo nível ${telemetry.nivelCarga} de 3`}>
+          <span>MINI-TURBO</span>
+          <div className="carga-degraus" aria-hidden="true">
+            {CARGA_NIVEIS.map((limiar, indice) => (
+              <i
+                key={limiar}
+                className={telemetry.nivelCarga > indice ? 'on' : ''}
+                style={{ '--enchido': `${Math.min(1, telemetry.carga / limiar) * 100}%` } as CSSProperties}
+              />
+            ))}
+          </div>
+          <small>{telemetry.nivelCarga > 0 ? 'SOLTE NA SAÍDA' : 'SEGURE POR DENTRO'}</small>
         </div>
       )}
 
@@ -2622,77 +3235,93 @@ function RaceCanvas({
         </div>
       )}
 
-      {mode === 'online' && phase !== 'countdown' && (
-        <div
-          className={`rival-panel ${rival?.stale || rival?.connected === false ? 'stale' : ''} ${rival?.onScreen && rival.connected ? 'compact' : ''}`}
-          aria-live="polite"
-        >
-          <span>{rival?.name ?? `${rivals.length} RIVAIS`}</span>
-          {rival?.connected === false ? (
-            <strong>SEM SINAL — AGUARDANDO O RETORNO</strong>
-          ) : !rival ? (
-            <strong>AGUARDANDO TELEMETRIA</strong>
-          ) : rival.finished ? (
-            <strong>CRUZOU A LINHA DE CHEGADA</strong>
-          ) : (
-            <strong>{rival.headline}</strong>
-          )}
-          {rival?.offScreen && rival.connected && !rival.finished && <em>{rival.offScreen}</em>}
-        </div>
-      )}
-
       {connectionNotice && <div className="connection-notice">{connectionNotice}</div>}
-      {!espectador && telemetry.offRoad && phase === 'racing' && telemetry.resetting === 0 && (
-        <div className="warning">
-          FORA DA PISTA
-          {/* O medidor que leva ao reset: enche na grama, esvazia no asfalto. */}
-          <span className="offtrack-track"><i style={{ width: `${Math.round(telemetry.offTrack * 100)}%` }} /></span>
-        </div>
-      )}
-      {!espectador && telemetry.resetting > 0 && phase === 'racing' && (
-        <div className="reset-banner" role="alert">
-          RESET
-          <small>{motivoDoReset === 'crashes' ? `${RESET_STRIKES} BATIDAS` : 'FORA DA PISTA'} · −{RESET_SECONDS.toFixed(1).replace('.', ',')} S</small>
-          {/* A chave reinicia a animação a cada reset. */}
-          <span className="reset-track"><i key={telemetry.resets} style={{ animationDuration: `${RESET_SECONDS}s` }} /></span>
-        </div>
-      )}
-      {/* A perda por esforço lateral precisa ser vista para ser justa: uma
-          punição que o piloto não percebe é só um bug do ponto de vista dele. */}
-      {!espectador && !telemetry.offRoad && telemetry.grip < 0.97 && phase === 'racing' && (
-        <div className="warning grip">PERDENDO ADERÊNCIA</div>
-      )}
-      {flash && <div className="impact">{flash}</div>}
 
-      {/* A nota de curva, do lado para onde a pista vai. Antes da curva ela
-          diz o que fazer; dentro, diz para segurar. */}
-      {!espectador && telemetry.nota && phase === 'racing' && telemetry.resetting === 0 && (
-        <div
-          className={`pace-note ${telemetry.nota.lado > 0 ? 'right' : 'left'} ${telemetry.nota.dentro ? 'inside' : ''} ${!telemetry.nota.dentro && telemetry.nota.metros < 90 ? 'close' : ''}`}
-          role="status"
-        >
-          <b className="pace-arrows" aria-hidden="true">
-            {telemetry.nota.lado > 0 ? '›››' : '‹‹‹'}
-            {telemetry.nota.depois !== 0 && <i>{telemetry.nota.depois > 0 ? ' ›››' : ' ‹‹‹'}</i>}
-          </b>
-          <span className="pace-name">
-            {telemetry.nota.nome} <em>{telemetry.nota.graus}°</em>
-          </span>
-          <small>
-            {telemetry.nota.dentro
-              ? `SEGURE ${telemetry.nota.lado > 0 ? 'À DIREITA' : 'À ESQUERDA'}`
-              : telemetry.boosting
-                ? 'SOLTE O BOOST'
-                : `${telemetry.nota.metros} M · ENTRE POR DENTRO`}
-          </small>
-        </div>
-      )}
-      {!espectador && tangencias > 0 && (
-        <div key={tangencias} className="tangency-flash" role="status">
-          TANGÊNCIA
-          <small>+{APEX_BOOST}% DE BOOST</small>
-        </div>
-      )}
+      {/* Os avisos da prova moram em duas colunas, uma de cada lado do
+          cronômetro: à esquerda o que cobra — fora da pista, batida, reset —,
+          à direita o rival e o que a pista paga — tangência, troca perfeita,
+          parcial. No monitor e no notebook as duas ficam na faixa do HUD,
+          acima do horizonte, e a pista fica inteira à vista; a nota de curva
+          vai para a coluna do lado da curva. No celular as colunas somem da
+          caixa (`display: contents`), e cada aviso fica onde sempre esteve. */}
+      <div className="avisos avisos-alerta">
+        {/* A nota de curva vem primeiro: ela dura a aproximação inteira, e os
+            avisos rápidos passam por baixo dela. */}
+        {nota && nota.lado < 0 && notaDeCurva}
+        {!espectador && lateStart > 0.4 && phase !== 'finished' && (
+          <div className="late-notice">LARGADA PERDIDA POR {lateStart.toFixed(1)} S — RECUPERANDO</div>
+        )}
+        {!espectador && telemetry.resetting > 0 && phase === 'racing' && (
+          <div className="reset-banner" role="alert">
+            RESET
+            <small>{motivoDoReset === 'crashes' ? `${RESET_STRIKES} BATIDAS` : 'FORA DA PISTA'} · −{RESET_SECONDS.toFixed(1).replace('.', ',')} S</small>
+            {/* A chave reinicia a animação a cada reset. */}
+            <span className="reset-track"><i key={telemetry.resets} style={{ animationDuration: `${RESET_SECONDS}s` }} /></span>
+          </div>
+        )}
+        {!espectador && telemetry.offRoad && phase === 'racing' && telemetry.resetting === 0 && (
+          <div className="warning">
+            FORA DA PISTA
+            {/* O medidor que leva ao reset: enche na grama, esvazia no asfalto. */}
+            <span className="offtrack-track"><i style={{ width: `${Math.round(telemetry.offTrack * 100)}%` }} /></span>
+          </div>
+        )}
+        {/* A perda por esforço lateral precisa ser vista para ser justa: uma
+            punição que o piloto não percebe é só um bug do ponto de vista dele. */}
+        {!espectador && !telemetry.offRoad && telemetry.grip < 0.97 && phase === 'racing' && (
+          <div className="warning grip">PERDENDO ADERÊNCIA</div>
+        )}
+        {flash?.tipo === 'alerta' && <div className="impact">{flash.texto}</div>}
+        {lembrete && <div className="warning lembrete" role="status">{lembrete}</div>}
+      </div>
+
+      <div className="avisos avisos-premio">
+        {nota && nota.lado > 0 && notaDeCurva}
+        {mode === 'online' && phase !== 'countdown' && (
+          <div
+            className={`rival-panel ${rival?.stale || rival?.connected === false ? 'stale' : ''} ${rival?.onScreen && rival.connected ? 'compact' : ''}`}
+            aria-live="polite"
+          >
+            <span>{rival?.name ?? `${rivals.length} RIVAIS`}</span>
+            {rival?.connected === false ? (
+              <strong>SEM SINAL — AGUARDANDO O RETORNO</strong>
+            ) : !rival ? (
+              <strong>AGUARDANDO TELEMETRIA</strong>
+            ) : rival.finished ? (
+              <strong>CRUZOU A LINHA DE CHEGADA</strong>
+            ) : (
+              <strong>
+                {rival.headline}
+                {rival.boosting && <b className="rival-boost"> · DE BOOST</b>}
+              </strong>
+            )}
+            {rival?.offScreen && rival.connected && !rival.finished && <em>{rival.offScreen}</em>}
+          </div>
+        )}
+        {!espectador && tangencias > 0 && (
+          <div key={tangencias} className="tangency-flash" role="status">
+            TANGÊNCIA{ultimaTangencia.sequencia > 1 && <b className="tangency-combo"> ×{ultimaTangencia.sequencia}</b>}
+            <small>+{ultimaTangencia.boost}% DE BOOST</small>
+          </div>
+        )}
+        {!espectador && trocaPerfeita && phase === 'racing' && (
+          <div key={trocaPerfeita.vez} className="troca-perfeita" role="status">
+            TROCA PERFEITA{trocaPerfeita.sequencia > 1 && <b> ×{trocaPerfeita.sequencia}</b>}
+            <small>+{IMPULSO_DA_TROCA.toFixed(1).replace('.', ',')} S DE TURBO</small>
+          </div>
+        )}
+        {flash?.tipo === 'premio' && <div className="impact premio">{flash.texto}</div>}
+        {parcial && phase === 'racing' && (
+          <div
+            key={parcial.setor}
+            className={`parcial-flash ${parcial.delta === null ? '' : parcial.delta <= 0 ? 'ganho' : 'perda'}`}
+            role="status"
+          >
+            <span>SETOR {parcial.setor}</span>
+            <strong>{parcial.delta === null ? formatTime(parcial.tempo) : formatarDelta(parcial.delta)}</strong>
+          </div>
+        )}
+      </div>
 
       {phase === 'countdown' && (
         <div className="countdown-layer">
@@ -2702,14 +3331,12 @@ function RaceCanvas({
             ))}
           </div>
           <p>{espectador ? 'A LARGADA VAI SAIR' : countdownLight === 0 ? 'PREPARE-SE' : 'AGUARDE AS LUZES APAGAREM'}</p>
+          {!espectador && <p className="countdown-dica">{dicaDosComandos}</p>}
           {mode !== 'solo' && <p className="countdown-sync">LARGADA SINCRONIZADA PELO SERVIDOR</p>}
         </div>
       )}
 
       {phase === 'racing' && telemetry.elapsed < 1.1 && <div className="go-signal">VAI!</div>}
-      {!espectador && lateStart > 0.4 && phase !== 'finished' && (
-        <div className="late-notice">LARGADA PERDIDA POR {lateStart.toFixed(1)} S — RECUPERANDO</div>
-      )}
 
       {espectador ? (
         <div
@@ -2746,6 +3373,18 @@ function RaceCanvas({
         >
           <button className="steer left" aria-label="Virar à esquerda" {...holdControl('left')}>‹</button>
           <button className="steer right" aria-label="Virar à direita" {...holdControl('right')}>›</button>
+          {/* As borboletas só existem no manual: no automático, seriam dois
+              botões a mais para o polegar errar. */}
+          {cambioManual && (
+            <div className="borboletas">
+              <button className="borboleta" aria-label="Subir marcha" {...tocarBorboleta('shiftUp')}>▲</button>
+              <button className="borboleta" aria-label="Reduzir marcha" {...tocarBorboleta('shiftDown')}>▼</button>
+            </div>
+          )}
+          {/* O freio fica à esquerda do boost, como o pedal fica à esquerda do acelerador. */}
+          <button className="brake-button" aria-label="Frear" {...holdControl('brake')}>
+            <span>FREIO</span>
+          </button>
           <button className="boost-button" aria-label="Ativar boost" {...holdControl('boost')}>
             <span>BOOST</span><small>SEGURE</small>
           </button>
@@ -2753,7 +3392,13 @@ function RaceCanvas({
       )}
 
       {/* Na arquibancada o painel da câmera mora na base, e os botões dizem as teclas. */}
-      {!espectador && <div className="keyboard-hint"><kbd>A</kbd><kbd>D</kbd> DIREÇÃO <kbd>ESPAÇO</kbd> BOOST</div>}
+      {!espectador && (
+        <div className="keyboard-hint">
+          <kbd>W</kbd><kbd>S</kbd> ACELERA E FREIA <kbd>A</kbd><kbd>D</kbd> DIREÇÃO
+          {cambioManual && <> <kbd>E</kbd><kbd>Q</kbd> MARCHA</>} <kbd>ESPAÇO</kbd> BOOST
+          {onRestart && <> <kbd>⌫</kbd> RECOMEÇAR</>}
+        </div>
+      )}
     </main>
   )
 }

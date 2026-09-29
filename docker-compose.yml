@@ -1,0 +1,36 @@
+# Postgres para perfis, Pista do Dia e ranqueada.
+#
+# Só o banco, para desenvolver:
+#   docker compose up -d banco
+#   DATABASE_URL=postgres://corrida:corrida@localhost:5432/corrida npm run dev
+#
+# O jogo inteiro, como em produção:
+#   docker compose --profile completo up -d
+#
+# Sem DATABASE_URL o servidor guarda tudo na memória: o jogo casual funciona
+# igual, e a Pista do Dia e a ranqueada esquecem tudo quando ele para.
+services:
+  banco:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: corrida
+      POSTGRES_PASSWORD: corrida
+      POSTGRES_DB: corrida
+    ports:
+      - "5432:5432"
+    volumes:
+      - dados-do-banco:/var/lib/postgresql/data
+
+  jogo:
+    build: .
+    profiles: ["completo"]
+    environment:
+      PORT: "3001"
+      DATABASE_URL: postgres://corrida:corrida@banco:5432/corrida
+    ports:
+      - "3001:3001"
+    depends_on:
+      - banco
+
+volumes:
+  dados-do-banco:

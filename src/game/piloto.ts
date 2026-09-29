@@ -1,6 +1,7 @@
 // A extensão .js é exigida pelo Node, que roda este módulo no servidor durante
 // os testes de aceitação. O Vite resolve para o arquivo .ts normalmente.
-import { STEER_RATE, STEER_TAU, type RaceInput, type RaceState } from './simulation.js'
+import { curvatureLoad, type TrackLayout } from './layout.js'
+import { CARGA_CURVA_MIN, STEER_RATE, STEER_TAU, type RaceInput, type RaceState } from './simulation.js'
 import { HIT_HALF_WIDTH, OFF_ROAD_LIMIT, VIEW_DISTANCE } from './track.js'
 
 /**
@@ -162,6 +163,55 @@ export function tangenciando(curvas: readonly CurvaAnunciada[], boost = false): 
       return { ...rumoA(alvo, state), boost: false }
     }
     return comando
+  }
+}
+
+/** O que o piloto completo precisa ver da pista: as super curvas e a curva de cada ponto. */
+export type PistaVista = Pick<TrackLayout, 'superCurves' | 'curvature'>
+
+/** Metros adiante em que o piloto completo lê a curva comum, como quem vê a pista chegar. */
+const OLHAR_ADIANTE_M = 15
+
+/** Até quantos metros adiante um obstáculo no caminho até a linha de dentro manda mais que a carga. */
+const CAMINHO_M = 70
+
+/** Faixa de dentro em que o piloto completo segura as curvas comuns. */
+const DENTRO_DA_CURVA = OFF_ROAD_LIMIT * 0.8
+
+/**
+ * O piloto que usa tudo o que a pista paga.
+ *
+ * Faz o que `tangenciando` faz — desvia, lê a nota de curva, tangencia — e, nas
+ * curvas comuns, carrega o mini-turbo: entra mirando a curva com o volante
+ * todo até chegar à linha de dentro, e segura ali; ao endireitar, a carga
+ * dispara. Guarda o boost para as retas, porque de boost a carga se perde. É o
+ * teto de referência: o que os testes usam para dizer que habilidade rende
+ * tempo, e o tempo de referência das medalhas de cada semente.
+ */
+export function pilotoCompleto(pista: PistaVista): Piloto {
+  const base = tangenciando(pista.superCurves, true)
+  return (state) => {
+    const comando = base(state)
+    const naSuperCurva = pista.superCurves.some(
+      (curva) => state.progress >= curva.start - PREPARO_M && state.progress <= curva.end,
+    )
+    if (naSuperCurva) return comando
+    const carga = curvatureLoad(pista.curvature(state.progress + OLHAR_ADIANTE_M))
+    if (Math.abs(carga) < CARGA_CURVA_MIN) return comando
+    const lado = Math.sign(carga)
+    const alvo = lado * DENTRO_DA_CURVA
+    // Um obstáculo entre o carro e a linha de dentro vem antes da carga: o
+    // desvio manda, sem boost, para não jogar fora o que já carregou.
+    for (const o of state.rules.obstacles) {
+      const adiante = o.distance - state.progress
+      if (adiante <= -5 || adiante > CAMINHO_M) continue
+      const folga = HIT_HALF_WIDTH[o.kind] + 0.14
+      const noCaminho = o.lane > Math.min(state.lateral, alvo) - folga && o.lane < Math.max(state.lateral, alvo) + folga
+      if (noCaminho) return { ...comando, boost: false }
+    }
+    // Mira a curva com o volante todo até chegar por dentro: é o que carrega.
+    if (state.lateral * lado < DENTRO_DA_CURVA - 0.05) return { left: lado < 0, right: lado > 0, boost: false }
+    return { ...rumoA(alvo, state), boost: false }
   }
 }
 

@@ -18,16 +18,50 @@ export const ALCANCE_DO_RADAR_M = 90
 /**
  * Transparência do fantasma.
  *
- * Perto, ele é translúcido como sempre foi — é fantasma, não colide, e não
- * pode esconder a pista. Longe, o carro vira meia dúzia de pixels contra a
- * bruma: ganha opacidade para continuar legível. Sem sinal, apaga; quem já
- * chegou fica discreto, parado na linha.
+ * Com seis na pista, nem todo fantasma importa igual: o recorde pessoal e o
+ * rival mais próximo — o da disputa naquele trecho — ficam mais opacos; os
+ * demais, a meia opacidade, presentes sem roubar a atenção. Todos ganham um
+ * pouco de longe, onde o carro vira meia dúzia de pixels contra a bruma. Sem
+ * sinal, apaga; quem já chegou fica discreto, parado na linha.
  */
-export function opacidadeDoFantasma(profundidade: number, estado: { semSinal: boolean; chegou: boolean }) {
+export function opacidadeDoFantasma(profundidade: number, estado: { semSinal: boolean; chegou: boolean; destaque?: boolean }) {
   if (estado.semSinal) return 0.23
   if (estado.chegou) return 0.3
   const longe = Math.max(0, Math.min(1, (profundidade - 40) / 140))
-  return 0.46 + 0.22 * longe
+  return estado.destaque ? 0.66 + 0.14 * longe : 0.46 + 0.08 * longe
+}
+
+/** Quantos fantasmas levam o nome na etiqueta; os outros levam só a posição. */
+export const NOMES_NA_PISTA = 2
+
+export type CandidatoAoDestaque = {
+  id: string
+  /** Metros até quem se está olhando, em valor absoluto: à frente ou atrás. */
+  distancia: number
+  /** O fantasma do recorde pessoal, que não disputa posição. */
+  recorde: boolean
+}
+
+/**
+ * A hierarquia dos fantasmas no quadro.
+ *
+ * Em destaque, mais opacos: o recorde pessoal e o rival mais próximo, à frente
+ * ou atrás. Com nome na etiqueta: os dois mais próximos, e o recorde sempre —
+ * cinco nomes na tela eram cinco coisas para ler numa curva; a posição basta
+ * para os outros, e a classificação ao lado diz quem é quem.
+ */
+export function hierarquiaDosFantasmas(candidatos: readonly CandidatoAoDestaque[]) {
+  const ordem = [...candidatos].sort((a, b) => a.distancia - b.distancia)
+  const rivalMaisProximo = ordem.find((candidato) => !candidato.recorde)?.id ?? null
+  return new Map(
+    ordem.map((candidato, indice) => [
+      candidato.id,
+      {
+        destaque: candidato.recorde || candidato.id === rivalMaisProximo,
+        comNome: candidato.recorde || indice < NOMES_NA_PISTA,
+      },
+    ]),
+  )
 }
 
 /** Texto escuro sobre cor clara, claro sobre cor escura: a luminância relativa decide. */
@@ -58,7 +92,15 @@ export type EtiquetaDoFantasma = {
   texto: string
   cor: string
   profundidade: number
+  /** De boost agora: a etiqueta ganha o contorno ciano do medidor de boost. */
+  boost?: boolean
 }
+
+/** A cor do boost ativo: a do medidor aceso, e a do contorno da etiqueta. */
+export const COR_DO_BOOST = '#43e7ff'
+
+/** O fundo dos painéis do HUD, no halo que separa o anel de boost da etiqueta. */
+const COR_DO_HALO = '#04070b'
 
 /** Degraus que uma etiqueta sobe para não encostar na de outro carro, antes de sumir. */
 export const DEGRAUS_DAS_ETIQUETAS = 3
@@ -139,6 +181,18 @@ export function desenharEtiquetasDosFantasmas(ctx: CanvasRenderingContext2D, eti
       ctx.lineTo(etiqueta.x + 4, topo + caixa.altura)
     }
     ctx.fill()
+    // Rival de boost: o contorno ciano diz, sem texto a mais, que ele está
+    // mandando a força toda agora — é a hora de ele abrir ou de fechar a porta.
+    // Um halo escuro por baixo separa o anel da etiqueta e do fundo: sem ele, o
+    // ciano sumia na etiqueta das Mercedes, que já é quase ciano.
+    if (etiqueta.boost) {
+      ctx.strokeStyle = COR_DO_HALO
+      ctx.lineWidth = 5
+      ctx.stroke()
+      ctx.strokeStyle = COR_DO_BOOST
+      ctx.lineWidth = 2
+      ctx.stroke()
+    }
     ctx.fillStyle = corDoTexto(etiqueta.cor)
     ctx.fillText(etiqueta.texto, etiqueta.x, topo + caixa.altura / 2 + 0.5)
   }

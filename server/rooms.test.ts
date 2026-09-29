@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_CAR } from '../src/game/cars.js'
-import { LATERAL_LIMIT, MAX_SPECTATORS, minRaceSeconds, RoomError, RoomStore, type Telemetry } from './rooms.js'
+import {
+  LATERAL_LIMIT,
+  MAX_SPECTATORS,
+  minRaceSeconds,
+  PROGRESS_TOLERANCE_M,
+  RoomError,
+  RoomStore,
+  tetoDaTelemetria,
+  type Telemetry,
+} from './rooms.js'
 
 /** Relógio controlado para testar agendamento e janela de reconexão. */
 function createClock(start = 1_000_000) {
@@ -259,6 +268,20 @@ describe('telemetria do adversário', () => {
     const aceita = rooms.acceptTelemetry(code, 'a', medicao(clock.now(), 120))
     expect(aceita?.progress).toBe(120)
     expect(aceita?.state).toBe('racing')
+  })
+
+  it('repassa o boost só como booleano, e nunca na chegada', () => {
+    const clock = createClock()
+    const { rooms, code } = salaCorrendo(clock)
+    expect(rooms.acceptTelemetry(code, 'a', medicao(clock.now(), 120, { boosting: true }))?.boosting).toBe(true)
+    clock.advance(100)
+    const adulterada = { ...medicao(clock.now(), 130), boosting: 'sim' } as unknown as Telemetry
+    expect(rooms.acceptTelemetry(code, 'a', adulterada)?.boosting).toBe(false)
+    clock.advance(100)
+    expect(rooms.acceptTelemetry(code, 'a', medicao(clock.now(), 140))?.boosting).toBe(false)
+    clock.advance(100)
+    const chegada = rooms.acceptTelemetry(code, 'a', medicao(clock.now(), 150, { state: 'finished', boosting: true }))
+    expect(chegada?.boosting).toBe(false)
   })
 
   it('recusa telemetria antes da largada', () => {
@@ -1205,5 +1228,35 @@ describe('easter egg do Hamilton na Mercedes no servidor', () => {
     const chegada = { time: turbo + 0.5, topSpeed: 450, collisions: 0 }
     expect(rooms.recordFinish(code, 'b', chegada)).toBeNull()
     expect(rooms.recordFinish(code, 'a', chegada)).not.toBeNull()
+  })
+
+  it('na ranqueada ele não vale: a telemetria fica no teto de todo mundo', () => {
+    const clock = createClock()
+    const rooms = new RoomStore({ now: clock.now })
+    const pilotos = [
+      { socketId: 'socket-a', playerId: 'a', nome: 'Ideau', carro: 'hamilton-mercedes' },
+      { socketId: 'socket-b', playerId: 'b', nome: 'Beto', carro: 'hamilton-mercedes' },
+    ]
+    const ranqueada = rooms.criarRanqueada(pilotos, 'dificil', () => 42)
+    const casual = rooms.create('socket-c', 'c', 'Ideau', 'hamilton-mercedes')
+    rooms.join(casual.code, 'socket-d', 'd', 'Duda')
+    rooms.setDifficulty(casual.code, 'c', 'dificil')
+    rooms.setReady(casual.code, 'c', true)
+    rooms.setReady(casual.code, 'd', true)
+    for (const code of [ranqueada.code, casual.code]) rooms.scheduleStart(code)
+    clock.advance(5_400)
+    for (const code of [ranqueada.code, casual.code]) rooms.beginRace(code)
+
+    const teto = tetoDaTelemetria('dificil')
+    const corrida = (code: string, playerId: string) => {
+      rooms.acceptTelemetry(code, playerId, { t: clock.now(), progress: 0, lateral: 0, speed: 0, state: 'racing' })
+      return (progress: number) => rooms.acceptTelemetry(code, playerId, { t: clock.now(), progress, lateral: 0, speed: progress * 3.6, state: 'racing' })
+    }
+    const naRanqueada = corrida(ranqueada.code, 'a')
+    const naCasual = corrida(casual.code, 'c')
+    clock.advance(1_000)
+    const rapido = teto * 1.4
+    expect(naRanqueada(rapido)!.progress).toBeLessThanOrEqual(teto + PROGRESS_TOLERANCE_M)
+    expect(naCasual(rapido)!.progress).toBeCloseTo(rapido)
   })
 })

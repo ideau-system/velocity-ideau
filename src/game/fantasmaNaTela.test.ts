@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { CARS } from './cars'
-import { corDoTexto, degrausDasEtiquetas, linhasDosRotulos, opacidadeDaEtiqueta, opacidadeDoFantasma } from './fantasmaNaTela'
+import {
+  corDoTexto,
+  degrausDasEtiquetas,
+  hierarquiaDosFantasmas,
+  linhasDosRotulos,
+  NOMES_NA_PISTA,
+  opacidadeDaEtiqueta,
+  opacidadeDoFantasma,
+} from './fantasmaNaTela'
 import { VIEW_DISTANCE } from './track'
 
 describe('transparência do fantasma', () => {
@@ -14,6 +22,14 @@ describe('transparência do fantasma', () => {
     const longe = opacidadeDoFantasma(VIEW_DISTANCE, normal)
     expect(longe).toBeGreaterThan(opacidadeDoFantasma(10, normal))
     expect(longe).toBeLessThan(0.75)
+  })
+
+  it('o recorde e o rival mais próximo ficam mais opacos; os demais, a meia opacidade', () => {
+    const destaque = opacidadeDoFantasma(20, { ...normal, destaque: true })
+    const comum = opacidadeDoFantasma(20, normal)
+    expect(destaque).toBeGreaterThan(comum + 0.15)
+    expect(comum).toBeCloseTo(0.5, 1)
+    expect(opacidadeDoFantasma(VIEW_DISTANCE, normal)).toBeCloseTo(0.5, 1)
   })
 
   it('sem sinal apaga, e quem chegou fica discreto', () => {
@@ -46,6 +62,29 @@ describe('etiqueta do fantasma', () => {
   it('no radar, sem linha livre, fica só a seta', () => {
     const empilhados = Array.from({ length: 4 }, () => ({ x: 150, largura: 50 }))
     expect(linhasDosRotulos(empilhados)).toEqual([0, 1, 2, null])
+  })
+
+  it('a hierarquia destaca o rival mais próximo e o recorde, e dá nome só aos dois mais próximos', () => {
+    const hierarquia = hierarquiaDosFantasmas([
+      { id: 'longe', distancia: 150, recorde: false },
+      { id: 'perto', distancia: 8, recorde: false },
+      { id: 'meio', distancia: 40, recorde: false },
+      { id: 'atras', distancia: 60, recorde: false },
+    ])
+    expect(hierarquia.get('perto')).toEqual({ destaque: true, comNome: true })
+    expect(hierarquia.get('meio')).toEqual({ destaque: false, comNome: true })
+    expect(hierarquia.get('atras')).toEqual({ destaque: false, comNome: false })
+    expect(hierarquia.get('longe')).toEqual({ destaque: false, comNome: false })
+    expect([...hierarquia.values()].filter((h) => h.comNome)).toHaveLength(NOMES_NA_PISTA)
+  })
+
+  it('o fantasma do recorde fica sempre em destaque e com nome, sem tirar o destaque do rival', () => {
+    const hierarquia = hierarquiaDosFantasmas([
+      { id: 'recorde', distancia: 300, recorde: true },
+      { id: 'rival', distancia: 12, recorde: false },
+    ])
+    expect(hierarquia.get('recorde')).toEqual({ destaque: true, comNome: true })
+    expect(hierarquia.get('rival')?.destaque).toBe(true)
   })
 
   it('etiquetas de um pelotão sobem em degraus em vez de se empilhar no mesmo ponto', () => {

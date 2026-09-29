@@ -1,4 +1,4 @@
-import { ACCELERATION_PEAK, STEER_TAU, type RaceState } from './simulation.js'
+import { ACCELERATION_PEAK, motorForte, STEER_TAU, type RaceState } from './simulation.js'
 import { OFF_ROAD_LIMIT } from './track.js'
 
 /**
@@ -47,6 +47,13 @@ const TAU = {
   slipstream: 0.22,
   corner: 0.2,
 }
+
+/**
+ * Constante de tempo da chama do boost, em segundos. É a mesma no carro do
+ * jogador e nos fantasmas, que a acendem pela telemetria: a chama é uma só, e
+ * o boost de um toque não pisca.
+ */
+export const BOOST_TAU = TAU.boost
 
 export type FeelState = {
   /** Velocidade de 0 a 1, entre parado e o máximo do carro. */
@@ -134,7 +141,8 @@ export function updateFeel(feel: FeelState, race: RaceState, dt: number) {
   // Esforço lateral: sai da aderência que a simulação já calculou.
   feel.strain = approach(feel.strain, clamp((1 - race.grip) / race.rules.maxGripLoss, 0, 1), TAU.strain, step)
 
-  feel.boost = approach(feel.boost, race.boosting ? 1 : 0, TAU.boost, step)
+  // O impulso do mini-turbo e da largada é força de boost, e se vê e se ouve como ela.
+  feel.boost = approach(feel.boost, motorForte(race) ? 1 : 0, TAU.boost, step)
 
   // Fora da pista cresce com o quanto o carro avançou para além da borda.
   const excedente = (Math.abs(race.lateral) - OFF_ROAD_LIMIT) / 0.3

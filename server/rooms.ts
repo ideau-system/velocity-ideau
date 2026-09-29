@@ -23,6 +23,8 @@ export type PublicPlayer = {
    * Não entra em nenhuma validação: a física é a mesma para todos os carros.
    */
   car: CarId
+  /** Volta gravada de outro piloto, correndo no lugar de quem faltou na fila ranqueada. */
+  fantasma?: boolean
 }
 
 export type PublicRoom = {
@@ -57,6 +59,13 @@ export type PublicRoom = {
    */
   hostId: string | null
   /**
+   * Sala da fila ranqueada: largada automática, nível oficial, sem anfitrião e
+   * sem revanche — a próxima corrida sai da fila.
+   */
+  ranqueada: boolean
+  /** Sala de uma rodada da Copa do Dia: largada automática, como a ranqueada, mas sem PL. */
+  copa?: RodadaDaCopa
+  /**
    * Quem assiste da arquibancada.
    *
    * Fora das vagas do grid: uma sala cheia, ou com a prova em andamento, ainda
@@ -71,6 +80,9 @@ export type PublicSpectator = {
   name: string
 }
 
+/** A divisão e a rodada da Copa do Dia que uma sala corre. */
+export type RodadaDaCopa = { divisao: number; rodada: number }
+
 export type RivalState = 'racing' | 'finished'
 
 export type Telemetry = {
@@ -80,6 +92,8 @@ export type Telemetry = {
   lateral: number
   speed: number
   state: RivalState
+  /** De boost — o boost apertado, ou o impulso da largada ou do mini-turbo. Só aparência. */
+  boosting?: boolean
 }
 
 type Player = {
@@ -92,6 +106,19 @@ type Player = {
   finish: FinishEntry | null
   rematch: boolean
   car: CarId
+  /** Volta gravada: sem conexão, confirmada, com a chegada marcada pelo servidor. */
+  fantasma: boolean
+  /** O perfil da conta com que o piloto entrou, para as estatísticas. Convidado não tem. */
+  perfilId: string | null
+}
+
+/** Um piloto que a fila da ranqueada ou a Copa põe direto numa sala. */
+export type PilotoDaSalaAutomatica = {
+  socketId: string
+  playerId: string
+  nome: string
+  carro: string
+  perfilId?: string | null
 }
 
 type Spectator = {
@@ -116,6 +143,17 @@ type Room = {
   hostId: string | null
   /** Resultado oficial da última corrida, idêntico para os dois pilotos. */
   outcome: RaceOutcome | null
+  /**
+   * Validação estrita, a da ranqueada: a telemetria é presa ao que cabe desde
+   * a largada, e a chegada só vale se a telemetria validada a sustentar.
+   */
+  exigeTelemetria: boolean
+  /** Sala da fila ranqueada. */
+  ranqueada: boolean
+  /** Sala de uma rodada da Copa do Dia. */
+  copa: RodadaDaCopa | null
+  /** De onde saem as sementes desta sala. A ranqueada usa o pool da semana. */
+  sorteioDeSemente: (() => number) | null
   /** A arquibancada: não ocupa vaga e não mexe na prova. */
   spectators: Spectator[]
 }
@@ -129,7 +167,7 @@ export type RoomUpdate = {
 
 export class RoomError extends Error {
   constructor(
-    public code: 'ROOM_NOT_FOUND' | 'ROOM_FULL' | 'RACE_IN_PROGRESS' | 'NOT_IN_ROOM' | 'NOT_HOST' | 'SPECTATORS_FULL',
+    public code: 'ROOM_NOT_FOUND' | 'ROOM_FULL' | 'RACE_IN_PROGRESS' | 'NOT_IN_ROOM' | 'NOT_HOST' | 'RANKED' | 'SPECTATORS_FULL',
     message: string,
   ) {
     super(message)
@@ -156,8 +194,32 @@ export const MAX_PLAYERS = 6
  */
 export const MAX_SPECTATORS = 30
 
-/** Teto de velocidade aceito na telemetria: acima disso o avanço é impossível. */
+/** Teto absoluto de velocidade aceito na telemetria: acima disso o avanço é impossível em qualquer nível. */
 export const MAX_PLAUSIBLE_SPEED_MS = 120
+
+/** Folga sobre o teto da física do nível, para arredondamento e variação de relógio. */
+const FOLGA_DO_TETO = 1.05
+
+/**
+ * Teto de velocidade da telemetria num nível, em metros por segundo.
+ *
+ * É o teto da própria física — boost e vácuo inteiros —, com uma folga pequena.
+ * O teto absoluto de 120 m/s passava de todos os níveis por mais de um quarto,
+ * e um cliente acelerado podia avançar o próprio fantasma nessa folga.
+ */
+export function tetoDaTelemetria(difficulty: Difficulty, turbo = 1) {
+  return Math.min(MAX_PLAUSIBLE_SPEED_MS * turbo, (speedForState(false, 0, true, rulesFor(difficulty, turbo), 1) / 3.6) * FOLGA_DO_TETO)
+}
+
+/**
+ * O multiplicador do easter egg de `turboDoPiloto` numa sala. Na ranqueada e
+ * na Copa ele não vale: onde há ponto ou troféu em jogo, o carro volta a ser
+ * só pintura, e o cliente corre sem ele também.
+ */
+function turboNaSala(room: Room, player: Player) {
+  return room.exigeTelemetria ? 1 : turboDoPiloto(player.name, player.car)
+}
+
 /** Folga em metros para não punir variação normal de rede. */
 export const PROGRESS_TOLERANCE_M = 8
 // O limite lateral é geometria da pista: vem do mesmo lugar que o jogo desenha,
@@ -189,6 +251,14 @@ export const MIN_RACE_SECONDS = minRaceSeconds('normal')
 
 /** Folga para a viagem do aviso de chegada até o servidor. */
 export const FINISH_TOLERANCE_SECONDS = 2
+
+/**
+ * Na ranqueada, quanto antes da linha a telemetria validada precisa estar para
+ * a chegada valer: pouco mais de um segundo no teto do nível. É o que o
+ * servidor sabe por conta própria do avanço do carro — a telemetria é presa ao
+ * que cabe desde a largada —, e um cliente acelerado não chega lá antes da hora.
+ */
+export const FINISH_PROGRESS_TOLERANCE_M = 150
 
 export type FinishOutcome = 'finished' | 'abandoned' | 'unfinished'
 
@@ -253,7 +323,7 @@ export class RoomStore {
     return [...this.openRooms]
   }
 
-  create(socketId: string, playerId: string, rawName: string, car?: unknown) {
+  create(socketId: string, playerId: string, rawName: string, car?: unknown, perfilId: string | null = null) {
     const code = this.createCode()
     this.rooms.set(code, {
       code,
@@ -264,13 +334,17 @@ export class RoomStore {
       difficulty: 'normal',
       hostId: playerId,
       outcome: null,
-      players: [this.createPlayer(playerId, socketId, rawName, car)],
+      exigeTelemetria: false,
+      ranqueada: false,
+      copa: null,
+      sorteioDeSemente: null,
+      players: [{ ...this.createPlayer(playerId, socketId, rawName, car), perfilId }],
       spectators: [],
     })
     return this.get(code)!
   }
 
-  join(codeInput: string, socketId: string, playerId: string, rawName: string, car?: unknown) {
+  join(codeInput: string, socketId: string, playerId: string, rawName: string, car?: unknown, perfilId: string | null = null) {
     const room = this.ensureOpenRoom(codeInput) ?? this.requireRoom(codeInput)
 
     const returning = room.players.find((player) => player.id === playerId)
@@ -278,6 +352,8 @@ export class RoomStore {
       returning.socketId = socketId
       returning.disconnectedAt = null
       returning.name = this.cleanName(rawName)
+      // Quem entrou na conta durante a queda passa a contar para ela.
+      if (perfilId) returning.perfilId = perfilId
       // Quem volta sem dizer o carro — um cliente antigo — mantém o que tinha.
       if (car !== undefined && this.canChangeCar(room)) returning.car = toCarId(car)
       return this.toPublic(room)
@@ -290,7 +366,7 @@ export class RoomStore {
     // Quem assistia e desceu para o grid deixa a arquibancada — só depois de a
     // vaga estar garantida, para uma recusa não o deixar sem lugar nenhum.
     room.spectators = room.spectators.filter((spectator) => spectator.id !== playerId)
-    room.players.push(this.createPlayer(playerId, socketId, rawName, car))
+    room.players.push({ ...this.createPlayer(playerId, socketId, rawName, car), perfilId })
     this.ensureHost(room)
     return this.toPublic(room)
   }
@@ -437,8 +513,109 @@ export class RoomStore {
     // aqui, ela fica congelada durante a contagem, a corrida e qualquer
     // reconexão no meio da prova — e a revanche, que passa por este mesmo
     // caminho, ganha uma pista nova para os dois ao mesmo tempo.
-    room.trackSeed = this.nextSeed()
+    room.trackSeed = room.sorteioDeSemente?.() ?? this.nextSeed()
     return this.toPublic(room)
+  }
+
+  /**
+   * Cria a sala de uma partida da fila ranqueada, com todos os pilotos já
+   * confirmados: a largada sai sozinha, no nível oficial, com a pista do pool.
+   */
+  criarRanqueada(
+    pilotos: ReadonlyArray<PilotoDaSalaAutomatica>,
+    difficulty: Difficulty,
+    sorteioDeSemente: () => number,
+    fantasmas: ReadonlyArray<{ id: string; nome: string; carro: string }> = [],
+  ) {
+    return this.criarAutomatica(pilotos, difficulty, sorteioDeSemente, fantasmas, null)
+  }
+
+  /**
+   * Cria a sala de uma rodada da Copa do Dia: como a da ranqueada — todos
+   * confirmados, largada sozinha, telemetria estrita —, na pista do dia.
+   */
+  criarDaCopa(
+    pilotos: ReadonlyArray<PilotoDaSalaAutomatica>,
+    difficulty: Difficulty,
+    seed: number,
+    copa: RodadaDaCopa,
+  ) {
+    return this.criarAutomatica(pilotos, difficulty, () => seed, [], copa)
+  }
+
+  private criarAutomatica(
+    pilotos: ReadonlyArray<PilotoDaSalaAutomatica>,
+    difficulty: Difficulty,
+    sorteioDeSemente: () => number,
+    fantasmas: ReadonlyArray<{ id: string; nome: string; carro: string }>,
+    copa: RodadaDaCopa | null,
+  ) {
+    const code = this.createCode()
+    this.rooms.set(code, {
+      code,
+      createdAt: this.now(),
+      state: 'idle',
+      startAt: null,
+      trackSeed: sorteioDeSemente(),
+      difficulty,
+      hostId: null,
+      outcome: null,
+      exigeTelemetria: true,
+      ranqueada: copa === null,
+      copa,
+      sorteioDeSemente,
+      spectators: [],
+      players: [
+        ...pilotos.map((piloto) => ({
+          ...this.createPlayer(piloto.playerId, piloto.socketId, piloto.nome, piloto.carro),
+          ready: true,
+          perfilId: piloto.perfilId ?? null,
+        })),
+        // Fantasmas não têm conexão: nenhuma queda ou saída os alcança.
+        ...fantasmas.map((fantasma) => ({
+          ...this.createPlayer(fantasma.id, '', fantasma.nome, fantasma.carro),
+          ready: true,
+          fantasma: true,
+        })),
+      ],
+    })
+    return this.toPublic(this.rooms.get(code)!)
+  }
+
+  /**
+   * A chegada de um fantasma, no tempo da volta gravada. Não passa pela
+   * validação: a volta foi validada quando foi corrida.
+   */
+  registrarChegadaDoFantasma(codeInput: string, playerId: string, tempo: number) {
+    const room = this.rooms.get(this.normalize(codeInput))
+    if (!room || room.state !== 'racing') return null
+    const player = room.players.find((candidate) => candidate.id === playerId)
+    if (!player || !player.fantasma || player.finish) return null
+    player.finish = {
+      playerId,
+      name: player.name,
+      time: tempo,
+      topSpeed: player.telemetry?.speed ?? 0,
+      collisions: 0,
+      outcome: 'finished',
+    }
+    const outcome = this.settleIfComplete(room)
+    return { room: this.toPublic(room), outcome }
+  }
+
+  /** A chegada registrada de um piloto, com o tempo oficial. */
+  chegadaDe(codeInput: string, playerId: string) {
+    const player = this.rooms.get(this.normalize(codeInput))?.players.find((candidate) => candidate.id === playerId)
+    return player?.finish ? { ...player.finish, car: player.car } : null
+  }
+
+  /** A telemetria de um fantasma, que o servidor mesmo produz da volta gravada. */
+  telemetriaDoFantasma(codeInput: string, playerId: string, telemetria: Telemetry) {
+    const room = this.rooms.get(this.normalize(codeInput))
+    const player = room?.players.find((candidate) => candidate.id === playerId)
+    if (!room || room.state !== 'racing' || !player?.fantasma || player.finish) return null
+    player.telemetry = telemetria
+    return telemetria
   }
 
   cancelStart(codeInput: string, options: { clearReady?: boolean } = {}) {
@@ -446,6 +623,23 @@ export class RoomStore {
     if (!room || room.state !== 'countdown') return null
     this.resetRace(room, options.clearReady ?? true)
     return this.toPublic(room)
+  }
+
+  /**
+   * Quem correu a prova com conta: o perfil, o carro e a largada, para o
+   * servidor guardar a corrida nas estatísticas de cada um.
+   */
+  pilotosComConta(codeInput: string) {
+    const room = this.rooms.get(this.normalize(codeInput))
+    if (!room) return null
+    return {
+      largada: room.startAt,
+      seed: room.trackSeed,
+      dificuldade: room.difficulty,
+      pilotos: room.players
+        .filter((player) => player.perfilId !== null && !player.fantasma)
+        .map((player) => ({ playerId: player.id, perfilId: player.perfilId!, car: player.car })),
+    }
   }
 
   /** Transição executada pelo servidor no instante agendado. */
@@ -482,13 +676,22 @@ export class RoomStore {
     if (previous && t === previous.t) t = previous.t + 1
 
     // O carro do easter egg anda mais: o teto dele sobe na mesma proporção.
-    const teto = MAX_PLAUSIBLE_SPEED_MS * turboDoPiloto(player.name, player.car)
+    const teto = tetoDaTelemetria(room.difficulty, turboNaSala(room, player))
     let progress = Math.max(0, input.progress)
     if (previous) {
       const elapsed = Math.max(0, (t - previous.t) / 1000)
       const ceiling = previous.progress + teto * elapsed + PROGRESS_TOLERANCE_M
       progress = Math.min(Math.max(progress, previous.progress), ceiling)
     }
+    // Na ranqueada, nem a primeira medição passa do que caberia desde a
+    // largada: sem isto, o primeiro pacote podia dizer qualquer progresso. Na
+    // sala casual o primeiro pacote segue livre, como sempre foi — é ele que
+    // devolve o fantasma de quem reconecta no meio da prova.
+    if (room.exigeTelemetria && room.startAt !== null) {
+      const desdeALargada = Math.max(0, (t - room.startAt) / 1000)
+      progress = Math.min(progress, teto * desdeALargada + PROGRESS_TOLERANCE_M)
+    }
+    progress = Math.min(progress, TRACK_LENGTH)
 
     const accepted: Telemetry = {
       t,
@@ -496,6 +699,10 @@ export class RoomStore {
       lateral: Math.max(-LATERAL_LIMIT, Math.min(LATERAL_LIMIT, input.lateral)),
       speed: Math.max(0, Math.min(teto * 3.6, input.speed)),
       state: input.state === 'finished' ? 'finished' : 'racing',
+      // Só aparência — a chama e o contorno ciano na tela do rival; a
+      // velocidade continua presa pelo teto acima. Booleano de verdade, e
+      // nunca na chegada: quem cruzou a linha não está mais acelerando.
+      boosting: input.state !== 'finished' && input.boosting === true,
     }
     player.telemetry = accepted
     return accepted
@@ -518,9 +725,12 @@ export class RoomStore {
 
     // O piso vem da dificuldade da própria sala: no profissional o carro é
     // mais rápido, e um tempo legítimo lá seria recusado pelo piso do normal.
-    const minimo = minRaceSeconds(room.difficulty, turboDoPiloto(player.name, player.car))
+    const minimo = minRaceSeconds(room.difficulty, turboNaSala(room, player))
     const elapsed = (this.now() - room.startAt) / 1000
     if (elapsed < minimo) return null
+    // Na ranqueada, a chegada precisa da telemetria que a sustente: o avanço
+    // que o servidor aceitou tem de estar perto da linha.
+    if (room.exigeTelemetria && (player.telemetry?.progress ?? 0) < TRACK_LENGTH - FINISH_PROGRESS_TOLERANCE_M) return null
 
     const reported = Number.isFinite(report.time) ? report.time : elapsed
     const floor = Math.max(minimo, elapsed - FINISH_TOLERANCE_SECONDS)
@@ -580,6 +790,30 @@ export class RoomStore {
     return { room: this.toPublic(room), outcome }
   }
 
+  /**
+   * Fecha a prova de quem ainda não chegou, como não completada.
+   *
+   * É o limite de tempo da ranqueada: um piloto que largou o celular com a aba
+   * aberta não pode segurar o resultado — e os PL — dos outros cinco.
+   */
+  encerrarPorTempo(codeInput: string) {
+    const room = this.rooms.get(this.normalize(codeInput))
+    if (!room || room.state !== 'racing') return null
+    for (const player of room.players) {
+      if (player.finish) continue
+      player.finish = {
+        playerId: player.id,
+        name: player.name,
+        time: null,
+        topSpeed: player.telemetry?.speed ?? 0,
+        collisions: 0,
+        outcome: 'unfinished',
+      }
+    }
+    const outcome = this.settleIfComplete(room)
+    return { room: this.toPublic(room), outcome }
+  }
+
   /** Resultado oficial da última corrida, igual para os dois pilotos. */
   outcomeFor(codeInput: string) {
     return this.rooms.get(this.normalize(codeInput))?.outcome ?? null
@@ -590,6 +824,8 @@ export class RoomStore {
     const room = this.requireRoom(codeInput)
     const player = room.players.find((candidate) => candidate.id === playerId)
     if (!player) throw new RoomError('NOT_IN_ROOM', 'Você não está nesta sala.')
+    if (room.ranqueada) throw new RoomError('RANKED', 'Na ranqueada, a próxima corrida sai da fila.')
+    if (room.copa) throw new RoomError('RANKED', 'Na copa, a próxima rodada sai sozinha.')
     if (room.state !== 'finished') return this.toPublic(room)
 
     player.rematch = true
@@ -701,9 +937,9 @@ export class RoomStore {
 
   private afterDeparture(code: string, room: Room): RoomUpdate {
     const cancelledCountdown = room.state === 'countdown'
-    // A sala só fecha quando fica vazia de verdade: com gente na arquibancada,
-    // ela espera o próximo piloto chegar.
-    if (room.players.length === 0 && room.spectators.length === 0) {
+    // Uma sala só de fantasmas não tem mais ninguém para correr — a não ser que
+    // haja gente na arquibancada: aí ela espera, e fecha quando o último sair.
+    if (room.players.every((player) => player.fantasma) && room.spectators.length === 0) {
       this.rooms.delete(code)
       return { code, room: null, cancelledCountdown }
     }
@@ -714,7 +950,7 @@ export class RoomStore {
 
   /** A saída de um espectador não mexe na prova: só fecha a sala se ela ficou vazia. */
   private afterSpectatorLeft(code: string, room: Room): RoomUpdate {
-    if (room.players.length === 0 && room.spectators.length === 0) {
+    if (room.players.every((player) => player.fantasma) && room.spectators.length === 0) {
       this.rooms.delete(code)
       return { code, room: null, cancelledCountdown: false }
     }
@@ -806,6 +1042,10 @@ export class RoomStore {
       // A sala de demonstração nasce vazia: o primeiro a entrar é o anfitrião.
       hostId: null,
       outcome: null,
+      exigeTelemetria: false,
+      ranqueada: false,
+      copa: null,
+      sorteioDeSemente: null,
       players: [],
       spectators: [],
     }
@@ -830,6 +1070,8 @@ export class RoomStore {
       finish: null,
       rematch: false,
       car: toCarId(car),
+      fantasma: false,
+      perfilId: null,
     }
   }
 
@@ -853,7 +1095,7 @@ export class RoomStore {
   }
 
   private toPublic(room: Room): PublicRoom {
-    const players = room.players.map(({ id, name, ready, disconnectedAt, finish, rematch, car }) => ({
+    const players = room.players.map(({ id, name, ready, disconnectedAt, finish, rematch, car, fantasma }) => ({
       id,
       name,
       ready,
@@ -861,6 +1103,7 @@ export class RoomStore {
       finished: finish !== null,
       rematch,
       car,
+      ...(fantasma ? { fantasma: true } : {}),
     }))
     const status: RoomStatus =
       room.state === 'finished'
@@ -881,6 +1124,8 @@ export class RoomStore {
       trackSeed: room.trackSeed,
       difficulty: room.difficulty,
       hostId: room.hostId,
+      ranqueada: room.ranqueada,
+      ...(room.copa ? { copa: { ...room.copa } } : {}),
       spectators: room.spectators.map(({ id, name }) => ({ id, name })),
     }
   }

@@ -21,9 +21,19 @@
  *
  * A parte pura — vozes, câmbio, rotação, pesos — fica em cima e é testada sem
  * navegador; a de Web Audio, embaixo.
+ *
+ * Na corrida, quem manda na marcha é a física: o motor sobe e cai exatamente
+ * quando o piloto troca, e cada troca soa como a de um Fórmula 1 — na subida,
+ * a ignição corta por um instante e o escapamento estala; na redução, o
+ * câmbio dá um toque no acelerador e o escapamento pipoca; no corte, o
+ * limitador engasga; tirando o pé, o combustível estoura no escapamento. O
+ * câmbio próprio de cada voz fica para quem só conhece a velocidade: a
+ * arquibancada, que segue o carro pela telemetria.
  */
 import type { AudioHost, AudioLevels } from './audio'
+import { soltarAoAcabar } from './banda'
 import type { CarId } from './cars'
+import { GIRO_MINIMO_DA_JANELA, QUEDAS_DO_CAMBIO } from './simulation'
 
 // ---------------------------------------------------------------------------
 // Vozes
@@ -336,6 +346,73 @@ export function camadasDaVoz(voz: EspecificacaoDoMotor = MOTOR_PADRAO): readonly
 
 export const CAMADAS = camadasDaVoz(MOTOR_PADRAO)
 
+/**
+ * O giro mais baixo em que a voz ainda soa como ela mesma: o da largada, ou
+ * um pouco abaixo do que o piloto segura no grid. É a ponta de baixo da faixa
+ * em que nenhuma camada é esticada além do que aguenta.
+ */
+export function pisoDaVoz(voz: EspecificacaoDoMotor = MOTOR_PADRAO) {
+  return Math.min(voz.largada, voz.segurando - 700)
+}
+
+/**
+ * O giro mais baixo, em fração do corte, que a física deixa numa troca feita
+ * na janela: a primeira puxada até onde a janela abre, caindo a queda da
+ * primeira para a segunda.
+ */
+export const GIRO_DEPOIS_DA_TROCA = GIRO_MINIMO_DA_JANELA * QUEDAS_DO_CAMBIO[0]
+
+/**
+ * Quanto da queda de giro da física a voz reproduz, de 0 a 1.
+ *
+ * Um, sempre que a gravação aguenta: o motor cai na troca exatamente o que o
+ * câmbio cai. A voz gravada só no alto do giro — o V8 da Brawn, o V10 da
+ * Williams — encolhe a queda o bastante para a troca mais funda cair no piso
+ * dela, e não abaixo.
+ */
+export function profundidadeDaVoz(voz: EspecificacaoDoMotor = MOTOR_PADRAO) {
+  return Math.min(1, (1 - pisoDaVoz(voz) / voz.corte) / (1 - GIRO_DEPOIS_DA_TROCA))
+}
+
+/**
+ * Rotação da voz para uma marcha e um giro da física.
+ *
+ * O corte da física é o corte da voz, e a troca cai onde a física troca. Na
+ * primeira a embreagem patina: o motor não cai abaixo do giro da largada. Numa
+ * marcha longa demais o giro afunda abaixo do piso — é o motor se arrastando,
+ * e é para soar assim —, até um quinto abaixo dele.
+ */
+export function rpmDaVoz(voz: EspecificacaoDoMotor, marcha: number, giro: number) {
+  const g = Number.isFinite(giro) ? limitar(giro, 0, 1) : 0
+  const rpm = voz.corte * (1 - profundidadeDaVoz(voz) * (1 - g))
+  if (!(marcha > 0)) return Math.max(voz.largada, rpm)
+  return Math.max(pisoDaVoz(voz) * 0.8, rpm)
+}
+
+/**
+ * O escapamento de cada voz: onde o estalo tem corpo (`tom`, em hertz),
+ * quanto ele aparece por cima do motor (`forca`), e se a voz tem a válvula de
+ * alívio dos turbos dos anos oitenta, que sopra a cada troca e a cada tirada
+ * de pé.
+ *
+ * O V10 estala agudo e seco; o V8, um pouco mais grave. O híbrido também tem
+ * turbina, mas ela abafa o escapamento em vez de soprar: estalos baixos e
+ * escuros.
+ */
+export type Escapamento = { tom: number; forca: number; turbo: boolean }
+
+export const ESCAPAMENTO: Record<IdDaVoz, Escapamento> = {
+  'mercedes-v10': { tom: 2_300, forca: 0.5, turbo: false },
+  'renault-v10': { tom: 2_200, forca: 0.5, turbo: false },
+  'cosworth-v10': { tom: 2_400, forca: 0.5, turbo: false },
+  'ferrari-v8': { tom: 1_900, forca: 0.55, turbo: false },
+  'mercedes-v8': { tom: 1_800, forca: 0.55, turbo: false },
+  'renault-v8': { tom: 1_850, forca: 0.55, turbo: false },
+  'honda-v6-turbo': { tom: 1_400, forca: 0.45, turbo: true },
+  'tag-v6-turbo': { tom: 1_300, forca: 0.45, turbo: true },
+  'hibrido-v6': { tom: 1_100, forca: 0.3, turbo: false },
+}
+
 // ---------------------------------------------------------------------------
 // Mistura
 // ---------------------------------------------------------------------------
@@ -488,8 +565,31 @@ const DESACELERACAO_SEM_CARGA = 0.05
 /** Quanto o motor abaixa com o pé fora, na voz que não tem o laço sem carga. */
 const PE_FORA_SEM_LACO = 0.45
 
+/**
+ * Por quanto tempo, depois de tirar o pé, o escapamento ainda estoura, em
+ * segundos. Os primeiros estouros vêm juntos e fortes; os últimos, espaçados.
+ */
+const DURACAO_DOS_ESTOUROS = 1.1
+
+/**
+ * Quanto o estalo da subida sai mais forte que um estouro comum: medido fora
+ * de tempo real, é o que o faz passar por cima do motor por um instante, em
+ * vez de só tapar o buraco do corte de ignição.
+ */
+const ESTALO_DA_SUBIDA = 1.8
+
+/**
+ * Engasgos do limitador por segundo. O corte de ignição liga e desliga
+ * depressa, e o ouvido lê isso como o "brrrrr" de quem esqueceu de trocar.
+ */
+const FREQUENCIA_DO_LIMITADOR = 16
+
 export class MotorF1 {
   private readonly saida: GainNode
+  /** Por onde o motor passa antes de sair: é aqui que o limitador engasga. */
+  private readonly corte: GainNode
+  /** Estalos, estouros e sopros: fora do motor, para o corte da troca não abafá-los. */
+  private readonly efeitos: GainNode
   private readonly fontes: AudioBufferSourceNode[] = []
   private readonly ganhos: GainNode[] = []
   private readonly camadas: readonly CamadaDoMotor[]
@@ -500,16 +600,33 @@ export class MotorF1 {
   private velocidadeAnterior = 0
   private tempoAnterior: number | null = null
   private oscilacao = 0
+  /** Até quando a rotação e o volume seguem o que a troca agendou, no relógio do áudio. */
+  private trocaAte = 0
+  /** Desde quando o pé está fora, no relógio do áudio; null com o pé no acelerador. */
+  private semCargaDesde: number | null = null
+  private proximoEstouro = 0
+  /** O limitador nasce na primeira batida no corte: quem nunca bate não paga o oscilador. */
+  private limitador: { lfo: OscillatorNode; profundidade: GainNode } | null = null
+  /** Mudo, os estalos nem são montados: atrás do volume zero custariam o mesmo. */
+  silenciado = false
 
   constructor(
     private readonly ctx: AudioHost,
     destino: AudioNode,
     private readonly voz: EspecificacaoDoMotor = MOTOR_PADRAO,
+    /** Ruído para os estalos e sopros; sem ele, as trocas soam só no motor. */
+    private readonly ruido: AudioBuffer | null = null,
   ) {
     this.camadas = camadasDaVoz(voz)
+    const agora = ctx.currentTime
     this.saida = ctx.createGain()
-    this.saida.gain.setValueAtTime(0, ctx.currentTime)
-    this.saida.connect(destino)
+    this.saida.gain.setValueAtTime(0, agora)
+    this.corte = ctx.createGain()
+    this.corte.gain.setValueAtTime(1, agora)
+    this.saida.connect(this.corte).connect(destino)
+    this.efeitos = ctx.createGain()
+    this.efeitos.gain.setValueAtTime(1, agora)
+    this.efeitos.connect(destino)
     void this.carregar()
   }
 
@@ -548,9 +665,20 @@ export class MotorF1 {
     const dt = this.tempoAnterior === null ? 0 : Math.max(0, agora - this.tempoAnterior)
     this.tempoAnterior = agora
 
+    // Na corrida, a marcha e o giro vêm da física. Sem eles — na arquibancada,
+    // que só conhece a velocidade —, o câmbio da voz escolhe sozinho.
+    const daFisica = levels.running && levels.marcha !== undefined && levels.giro !== undefined
     let estado: EstadoDoMotor
-    if (levels.running) {
+    if (daFisica) {
+      const marcha = Math.max(0, Math.round(levels.marcha!))
+      estado = { marcha, rpm: rpmDaVoz(this.voz, marcha, levels.giro!) }
+    } else if (levels.running) {
       estado = rotacaoF1(levels.speed, this.marcha, this.voz)
+    } else if (levels.acelerador) {
+      // No grid, pé no acelerador: o piloto segura o giro da largada, com o
+      // tremor de quem está com o pé no fundo e a embreagem no ponto.
+      this.oscilacao += dt
+      estado = { marcha: 0, rpm: this.voz.largada + Math.sin(this.oscilacao * 11) * 110 }
     } else {
       // Parado no grid, o piloto brinca com o acelerador em volta do giro da
       // largada: uma onda lenta, para o motor não soar como gravação em laço.
@@ -559,38 +687,202 @@ export class MotorF1 {
       estado = { marcha: 0, rpm: this.voz.segurando + brinca * 900 }
     }
     const trocouParaCima = estado.marcha > this.marcha
+    const trocouParaBaixo = estado.marcha < this.marcha
     this.marcha = estado.marcha
 
-    // Pé fora quando o carro perde velocidade: batida, grama, reset.
+    // Carga: com o pedal da física, o pé é o do piloto. Sem ele, pé fora
+    // quando o carro perde velocidade: batida, grama, reset.
     const desacelerando = dt > 0 && (levels.speed - this.velocidadeAnterior) / dt < -DESACELERACAO_SEM_CARGA
     this.velocidadeAnterior = levels.speed
-    const cargaAlvo = levels.running && desacelerando ? 0 : 1
+    const pedal = levels.acelerador !== undefined
+    const cargaAlvo = !levels.running ? 1 : pedal ? (levels.acelerador && !levels.freando ? 1 : 0) : desacelerando ? 0 : 1
     const tempo = cargaAlvo < this.carga ? 0.06 : 0.22
     this.carga += (cargaAlvo - this.carga) * (1 - Math.exp(-dt / tempo))
 
     const pesos = pesosDasCamadas(estado.rpm, this.carga, this.voz)
     const peFora = this.voz.alivio ? 1 : 1 - PE_FORA_SEM_LACO * (1 - this.carga)
     const volume = volumeDoMotor(levels, estado.rpm, this.voz) * peFora
+    const naTroca = agora < this.trocaAte
     this.camadas.forEach((camada, i) => {
-      this.fontes[i].playbackRate.setTargetAtTime(taxaDaCamada(camada, estado.rpm), agora, RAMPA * 0.4)
+      if (!naTroca) this.fontes[i].playbackRate.setTargetAtTime(taxaDaCamada(camada, estado.rpm), agora, RAMPA * 0.4)
       this.ganhos[i].gain.setTargetAtTime(pesos[i], agora, RAMPA)
     })
-    // Na troca para cima a ignição corta por um instante: o soluço que marca
-    // cada marcha.
-    if (trocouParaCima) {
-      this.saida.gain.cancelScheduledValues(agora)
-      this.saida.gain.setTargetAtTime(volume * 0.3, agora, 0.008)
-      this.saida.gain.setTargetAtTime(volume, agora + 0.045, 0.02)
-    } else {
-      this.saida.gain.setTargetAtTime(volume, agora, RAMPA)
-    }
+    if (trocouParaCima) this.subiu(agora, estado.rpm, volume)
+    else if (trocouParaBaixo && levels.running) this.reduziu(agora, estado.rpm, volume)
+    else if (!naTroca) this.saida.gain.setTargetAtTime(volume, agora, RAMPA)
+    this.bateNoCorte(agora, daFisica && levels.noCorte === true)
+    this.estouros(agora, levels.running && pedal && cargaAlvo === 0, estado.rpm)
     return true
+  }
+
+  /** O contexto andando e o som ligado: só então vale montar um estalo. */
+  private get audivel() {
+    return !this.silenciado && this.ctx.state === 'running'
+  }
+
+  /**
+   * Troca para cima. A de Fórmula 1 leva uns quarenta milissegundos: o giro
+   * despenca, a ignição corta por um instante — o soluço que marca cada
+   * marcha — e o escapamento estala. No turbo dos anos oitenta, a válvula de
+   * alívio sopra junto.
+   */
+  private subiu(agora: number, rpm: number, volume: number) {
+    this.trocaAte = agora + 0.05
+    this.camadas.forEach((camada, i) => {
+      const taxa = this.fontes[i].playbackRate
+      taxa.cancelScheduledValues(agora)
+      taxa.setTargetAtTime(taxaDaCamada(camada, rpm), agora, 0.01)
+    })
+    const ganho = this.saida.gain
+    ganho.cancelScheduledValues(agora)
+    ganho.setTargetAtTime(volume * 0.28, agora, 0.006)
+    ganho.setTargetAtTime(volume, agora + 0.028, 0.016)
+    if (!this.audivel) return
+    const { tom, forca, turbo } = ESCAPAMENTO[this.voz.id]
+    // O estalo passa por cima do motor: é o "brap" que marca a troca.
+    this.estalo(agora + 0.004, forca * ESTALO_DA_SUBIDA, tom, 0.035)
+    if (turbo) this.sopro(agora + 0.012, forca * 0.45)
+  }
+
+  /**
+   * Redução. Ninguém pisa na embreagem num Fórmula 1: o câmbio dá um toque no
+   * acelerador, o giro pula acima do da marcha nova e volta, e o escapamento
+   * pipoca. Numa frenagem forte, é a sequência de "bwap, bwap, bwap".
+   */
+  private reduziu(agora: number, rpm: number, volume: number) {
+    this.trocaAte = agora + 0.1
+    const pulo = Math.min(this.voz.corte, rpm * 1.07)
+    this.camadas.forEach((camada, i) => {
+      const taxa = this.fontes[i].playbackRate
+      taxa.cancelScheduledValues(agora)
+      taxa.setTargetAtTime(taxaDaCamada(camada, pulo), agora, 0.01)
+      taxa.setTargetAtTime(taxaDaCamada(camada, rpm), agora + 0.06, 0.025)
+    })
+    const ganho = this.saida.gain
+    ganho.cancelScheduledValues(agora)
+    ganho.setTargetAtTime(volume * 1.18, agora, 0.008)
+    ganho.setTargetAtTime(volume, agora + 0.06, 0.03)
+    if (!this.audivel) return
+    const { tom, forca } = ESCAPAMENTO[this.voz.id]
+    this.estalo(agora + 0.035 + Math.random() * 0.02, forca * 0.7, tom * 0.55, 0.035)
+    this.estalo(agora + 0.09 + Math.random() * 0.04, forca * 0.45, tom * 0.5, 0.03)
+  }
+
+  /**
+   * O limitador: batendo no corte, a ignição liga e desliga depressa e o motor
+   * engasga. Um oscilador quadrado, suavizado para não estalar a cada corte,
+   * mexe no volume do motor enquanto o carro está no corte.
+   */
+  private bateNoCorte(agora: number, ligado: boolean) {
+    if (!ligado && !this.limitador) return
+    if (!this.limitador) {
+      const lfo = this.ctx.createOscillator()
+      lfo.type = 'square'
+      lfo.frequency.setValueAtTime(FREQUENCIA_DO_LIMITADOR, agora)
+      const suave = this.ctx.createBiquadFilter()
+      suave.type = 'lowpass'
+      suave.frequency.setValueAtTime(140, agora)
+      const profundidade = this.ctx.createGain()
+      profundidade.gain.setValueAtTime(0, agora)
+      lfo.connect(suave).connect(profundidade).connect(this.corte.gain)
+      lfo.start(agora)
+      this.limitador = { lfo, profundidade }
+    }
+    // O volume oscila entre um terço e o cheio: o motor não some, engasga.
+    this.limitador.profundidade.gain.setTargetAtTime(ligado ? 0.33 : 0, agora, 0.015)
+    this.corte.gain.setTargetAtTime(ligado ? 0.67 : 1, agora, 0.015)
+  }
+
+  /**
+   * Pé fora em giro alto: o combustível que sobra estoura no escapamento. É o
+   * som de toda frenagem de Fórmula 1 — estouros fortes e juntos logo que o
+   * piloto tira o pé, cada vez mais fracos e espaçados.
+   */
+  private estouros(agora: number, peFora: boolean, rpm: number) {
+    if (!peFora) {
+      this.semCargaDesde = null
+      return
+    }
+    const { tom, forca, turbo } = ESCAPAMENTO[this.voz.id]
+    if (this.semCargaDesde === null) {
+      this.semCargaDesde = agora
+      this.proximoEstouro = agora + 0.04
+      if (turbo && this.audivel) this.sopro(agora + 0.02, forca * 0.4)
+    }
+    const desde = agora - this.semCargaDesde
+    const piso = pisoDaVoz(this.voz)
+    const giroAlto = (rpm - piso) / Math.max(1, this.voz.corte - piso)
+    if (desde > DURACAO_DOS_ESTOUROS || giroAlto < 0.2 || agora < this.proximoEstouro) return
+    this.proximoEstouro = agora + 0.045 + Math.random() * 0.12 + desde * 0.12
+    if (!this.audivel) return
+    const resto = 1 - desde / DURACAO_DOS_ESTOUROS
+    const forcaDoEstouro = forca * (0.25 + Math.random() * 0.35) * resto
+    this.estalo(agora + Math.random() * 0.015, forcaDoEstouro, tom * (0.45 + Math.random() * 0.2), 0.025 + Math.random() * 0.03)
+  }
+
+  /**
+   * Um estalo do escapamento: um golpe de ruído na faixa do tom, que some em
+   * poucas dezenas de milissegundos, com um baque grave por baixo.
+   */
+  private estalo(quando: number, forca: number, tom: number, duracao: number) {
+    if (!this.ruido || !(forca > 0)) return
+    const fonte = this.ctx.createBufferSource()
+    fonte.buffer = this.ruido
+    const filtro = this.ctx.createBiquadFilter()
+    filtro.type = 'bandpass'
+    filtro.frequency.setValueAtTime(tom, quando)
+    filtro.Q.setValueAtTime(0.9, quando)
+    const ganho = this.ctx.createGain()
+    ganho.gain.setValueAtTime(0, quando)
+    ganho.gain.linearRampToValueAtTime(forca, quando + 0.002)
+    ganho.gain.exponentialRampToValueAtTime(0.0005, quando + duracao)
+    fonte.connect(filtro).connect(ganho).connect(this.efeitos)
+    // Cada estalo lê um trecho diferente do ruído: dois seguidos não soam iguais.
+    fonte.start(quando, Math.random() * Math.max(0, this.ruido.duration - 0.2), duracao + 0.02)
+    soltarAoAcabar(fonte, filtro, ganho)
+
+    const baque = this.ctx.createOscillator()
+    baque.type = 'sine'
+    baque.frequency.setValueAtTime(70 + tom * 0.04, quando)
+    baque.frequency.exponentialRampToValueAtTime(42, quando + duracao * 1.3)
+    const ganhoDoBaque = this.ctx.createGain()
+    ganhoDoBaque.gain.setValueAtTime(0, quando)
+    ganhoDoBaque.gain.linearRampToValueAtTime(forca * 0.7, quando + 0.003)
+    ganhoDoBaque.gain.exponentialRampToValueAtTime(0.0005, quando + duracao * 1.3)
+    baque.connect(ganhoDoBaque).connect(this.efeitos)
+    baque.start(quando)
+    baque.stop(quando + duracao * 1.3 + 0.02)
+    soltarAoAcabar(baque, ganhoDoBaque)
+  }
+
+  /** A válvula de alívio do turbo: um sopro agudo que some em dois décimos. */
+  private sopro(quando: number, forca: number) {
+    if (!this.ruido || !(forca > 0)) return
+    const fonte = this.ctx.createBufferSource()
+    fonte.buffer = this.ruido
+    const grave = this.ctx.createBiquadFilter()
+    grave.type = 'highpass'
+    grave.frequency.setValueAtTime(1_800, quando)
+    const faixa = this.ctx.createBiquadFilter()
+    faixa.type = 'bandpass'
+    faixa.frequency.setValueAtTime(4_200, quando)
+    faixa.frequency.exponentialRampToValueAtTime(2_600, quando + 0.22)
+    faixa.Q.setValueAtTime(0.7, quando)
+    const ganho = this.ctx.createGain()
+    ganho.gain.setValueAtTime(0, quando)
+    ganho.gain.linearRampToValueAtTime(forca, quando + 0.015)
+    ganho.gain.exponentialRampToValueAtTime(0.0005, quando + 0.22)
+    fonte.connect(grave).connect(faixa).connect(ganho).connect(this.efeitos)
+    fonte.start(quando, Math.random() * Math.max(0, this.ruido.duration - 0.4), 0.25)
+    soltarAoAcabar(fonte, grave, faixa, ganho)
   }
 
   close() {
     if (this.encerrado) return
     this.encerrado = true
-    for (const fonte of this.fontes) {
+    const fontes: AudioScheduledSourceNode[] = [...this.fontes]
+    if (this.limitador) fontes.push(this.limitador.lfo)
+    for (const fonte of fontes) {
       try {
         fonte.stop()
       } catch {

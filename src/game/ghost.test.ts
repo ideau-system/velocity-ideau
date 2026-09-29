@@ -240,6 +240,25 @@ describe('perda de sinal', () => {
     expect(tracker.sample(BASE + 50)?.state).toBe('finished')
   })
 
+  it('diz quando o rival está de boost, e só enquanto a medição sustenta', () => {
+    const tracker = new GhostTracker()
+    tracker.push(snapshot(BASE, 100, { boosting: true }))
+    expect(tracker.sample(BASE + 50)?.boosting).toBe(true)
+    // Sem sinal, não se afirma que ele segue de boost.
+    expect(tracker.sample(BASE + MAX_EXTRAPOLATION_MS + 100)?.boosting).toBe(false)
+    tracker.push(snapshot(BASE + 1_100, 170, { boosting: false }))
+    expect(tracker.sample(BASE + 1_150)?.boosting).toBe(false)
+  })
+
+  it('quem chegou não está de boost, e o cliente que não manda o campo também não', () => {
+    const chegou = new GhostTracker()
+    chegou.push(snapshot(BASE, 4_800, { state: 'finished', boosting: true }))
+    expect(chegou.sample(BASE + 10)?.boosting).toBe(false)
+    const antigo = new GhostTracker()
+    antigo.push(snapshot(BASE, 100))
+    expect(antigo.sample(BASE + 10)?.boosting).toBe(false)
+  })
+
   it('medições com números estragados não quebram o fantasma', () => {
     const tracker = new GhostTracker()
     tracker.push(snapshot(BASE, 100, { lateral: Number.NaN, speed: Number.POSITIVE_INFINITY }))

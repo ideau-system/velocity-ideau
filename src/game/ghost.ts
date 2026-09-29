@@ -26,6 +26,11 @@ export type GhostSnapshot = {
   lateral: number
   speed: number
   state: RivalState
+  /**
+   * Motor com a força do boost: o boost apertado, ou o impulso da largada ou do
+   * mini-turbo. Opcional — o fantasma gravado e o cliente antigo não mandam.
+   */
+  boosting?: boolean
 }
 
 export type GhostSample = {
@@ -37,6 +42,8 @@ export type GhostSample = {
   stale: boolean
   /** Instante da chegada, no relógio do servidor, para quem já cruzou a linha. */
   finishedAt?: number | null
+  /** O rival está de boost agora. Sem sinal ou na chegada, não está. */
+  boosting?: boolean
 }
 
 /**
@@ -79,6 +86,7 @@ type Projecao = {
   velocidade: number
   state: RivalState
   stale: boolean
+  boosting: boolean
 }
 
 export class GhostTracker {
@@ -97,6 +105,7 @@ export class GhostTracker {
       lateral: Number.isFinite(snapshot.lateral) ? snapshot.lateral : 0,
       speed: Number.isFinite(snapshot.speed) ? Math.max(0, snapshot.speed) : 0,
       state: snapshot.state === 'finished' ? 'finished' : 'racing',
+      boosting: snapshot.boosting === true,
     }
 
     const repetida = this.buffer.findIndex((item) => item.t === medicao.t)
@@ -151,6 +160,7 @@ export class GhostTracker {
       state: alvo.state,
       stale: alvo.stale,
       finishedAt: this.chegadaEm,
+      boosting: alvo.boosting,
     }
   }
 
@@ -170,14 +180,21 @@ export class GhostTracker {
     const oldest = this.buffer[0]
 
     if (now <= oldest.t) {
-      return { progress: oldest.progress, lateral: oldest.lateral, velocidade: oldest.speed / 3.6, state: oldest.state, stale: false }
+      return {
+        progress: oldest.progress,
+        lateral: oldest.lateral,
+        velocidade: oldest.speed / 3.6,
+        state: oldest.state,
+        stale: false,
+        boosting: oldest.state === 'racing' && oldest.boosting === true,
+      }
     }
     if (now < newest.t) return this.interpolar(now)
 
     const idade = now - newest.t
     const stale = idade > MAX_EXTRAPOLATION_MS
     if (newest.state === 'finished') {
-      return { progress: newest.progress, lateral: newest.lateral, velocidade: 0, state: 'finished', stale }
+      return { progress: newest.progress, lateral: newest.lateral, velocidade: 0, state: 'finished', stale, boosting: false }
     }
 
     const h = Math.min(idade, MAX_EXTRAPOLATION_MS) / 1000
@@ -197,7 +214,8 @@ export class GhostTracker {
       Math.min(LATERAL_LIMIT, newest.lateral + Math.max(-3, Math.min(3, deriva)) * Math.min(h, HORIZONTE_LATERAL_MS / 1000)),
     )
 
-    return { progress, lateral, velocidade: stale ? 0 : h < ha ? Math.max(0, v0 + a * h) : v1, state: 'racing', stale }
+    // O boost é o da medição mais nova; sem sinal, não se afirma nada.
+    return { progress, lateral, velocidade: stale ? 0 : h < ha ? Math.max(0, v0 + a * h) : v1, state: 'racing', stale, boosting: !stale && newest.boosting === true }
   }
 
   private interpolar(target: number): Projecao {
@@ -214,6 +232,7 @@ export class GhostTracker {
       velocidade: speed / 3.6,
       state: ratio >= 1 ? next.state : previous.state,
       stale: false,
+      boosting: (ratio >= 1 ? next : previous).state === 'racing' && (ratio >= 1 ? next : previous).boosting === true,
     }
   }
 

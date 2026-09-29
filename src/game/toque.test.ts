@@ -6,8 +6,8 @@ describe('comandos da corrida', () => {
     const comandos = new Comandos()
     comandos.dedoDesceu(1, 'left')
     comandos.dedoSubiu(1)
-    expect(comandos.consumir()).toEqual({ left: true, right: false, boost: false })
-    expect(comandos.consumir()).toEqual({ left: false, right: false, boost: false })
+    expect(comandos.consumir()).toMatchObject({ left: true, right: false, boost: false })
+    expect(comandos.consumir()).toMatchObject({ left: false, right: false, boost: false })
   })
 
   it('o comando segurado continua ligado em todos os quadros', () => {
@@ -44,7 +44,7 @@ describe('comandos da corrida', () => {
     comandos.dedoDesceu(7, 'left')
     comandos.consumir()
     comandos.dedoMudou(7, 'right')
-    expect(comandos.consumir()).toEqual({ left: false, right: true, boost: false })
+    expect(comandos.consumir()).toMatchObject({ left: false, right: true, boost: false })
     expect(comandos.dedoSubiu(7)).toBe('right')
   })
 
@@ -80,8 +80,65 @@ describe('comandos da corrida', () => {
     comandos.dedoDesceu(1, 'left')
     comandos.dedoDesceu(2, 'boost')
     comandos.soltarTudo()
-    expect(comandos.consumir()).toEqual({ left: false, right: false, boost: false })
+    expect(comandos.consumir()).toMatchObject({ left: false, right: false, boost: false })
     expect(comandos.dedoEm('left')).toBe(false)
+  })
+})
+
+describe('pedais e borboletas', () => {
+  it('sem o acelerador automático, o pé só vai ao fundo com a tecla', () => {
+    const comandos = new Comandos()
+    expect(comandos.consumir().throttle).toBe(false)
+    comandos.tecla('throttle', true)
+    expect(comandos.consumir().throttle).toBe(true)
+    comandos.tecla('throttle', false)
+    expect(comandos.consumir().throttle).toBe(false)
+  })
+
+  it('no toque o pé fica no fundo sozinho, e o freio vai junto quando o dedo aperta', () => {
+    const comandos = new Comandos()
+    comandos.aceleradorAutomatico = true
+    expect(comandos.consumir()).toMatchObject({ throttle: true, brake: false })
+    comandos.dedoDesceu(4, 'brake')
+    expect(comandos.consumir()).toMatchObject({ throttle: true, brake: true })
+    comandos.dedoSubiu(4)
+    expect(comandos.consumir().brake).toBe(false)
+  })
+
+  it('um toque rápido no freio, entre dois quadros, freia por um quadro', () => {
+    const comandos = new Comandos()
+    comandos.dedoDesceu(2, 'brake')
+    comandos.dedoSubiu(2)
+    expect(comandos.consumir().brake).toBe(true)
+    expect(comandos.consumir().brake).toBe(false)
+  })
+
+  it('cada toque na borboleta troca uma marcha, um por quadro, e segurar não troca outra', () => {
+    const comandos = new Comandos()
+    comandos.manual = true
+    comandos.borboleta('shiftUp')
+    comandos.borboleta('shiftUp')
+    expect(comandos.consumir()).toMatchObject({ shiftUp: true, shiftDown: false, manual: true })
+    expect(comandos.consumir().shiftUp).toBe(true)
+    expect(comandos.consumir().shiftUp).toBe(false)
+    comandos.borboleta('shiftDown')
+    expect(comandos.consumir()).toMatchObject({ shiftUp: false, shiftDown: true })
+    expect(comandos.consumir().shiftDown).toBe(false)
+  })
+
+  it('o câmbio vai em todo quadro, para o registro saber quando mudou', () => {
+    const comandos = new Comandos()
+    expect(comandos.consumir().manual).toBe(false)
+    comandos.manual = true
+    expect(comandos.consumir().manual).toBe(true)
+  })
+
+  it('soltar tudo esquece as borboletas tocadas e ainda não trocadas', () => {
+    const comandos = new Comandos()
+    comandos.borboleta('shiftUp')
+    comandos.tecla('brake', true)
+    comandos.soltarTudo()
+    expect(comandos.consumir()).toMatchObject({ shiftUp: false, brake: false })
   })
 })
 

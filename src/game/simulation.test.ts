@@ -1075,7 +1075,7 @@ describe('super curvas e tangência', () => {
     state.boost = 40
     state.lateral = APEX_LATERAL + 0.1
     const eventos = stepRace(state, PARADO, 1 / 60, zebra(1))
-    expect(eventos).toContainEqual({ type: 'apex', curveId: 1 })
+    expect(eventos).toContainEqual({ type: 'apex', curveId: 1, boost: APEX_BOOST, sequencia: 1 })
     expect(state.boost).toBeCloseTo(40 + APEX_BOOST, 0)
 
     // A mesma curva não paga duas vezes.
