@@ -588,3 +588,22 @@ describe('perda momentânea de conexão pelo socket', () => {
     expect(resposta.room?.trackSeed).toBe(trackSeed)
   })
 })
+
+describe('movimento do jogo pelo socket', () => {
+  type Movimento = { ok: boolean; online: number; naFila: number; correndo: number; assistindo: number }
+
+  it('conta os conectados, a fila e quem está correndo, também para o convidado', async () => {
+    const { ana, beto, code } = await gridCompleto()
+    const antes = await ask<Movimento>(ana, 'jogo:movimento')
+    expect(antes).toEqual({ ok: true, online: 2, naFila: 0, correndo: 0, assistindo: 0 })
+
+    const agendada = waitFor<Scheduled>(ana, 'race:scheduled')
+    ana.emit('room:set-ready', { code, playerId: 'ana', ready: true })
+    beto.emit('room:set-ready', { code, playerId: 'beto', ready: true })
+    await agendada
+    const plateia = await connect()
+    await ask<RoomAck>(plateia, 'room:spectate', { code, name: 'Gil', spectatorId: 'gil' })
+
+    expect(await ask<Movimento>(plateia, 'jogo:movimento')).toEqual({ ok: true, online: 3, naFila: 0, correndo: 2, assistindo: 1 })
+  })
+})

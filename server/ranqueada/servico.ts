@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Difficulty } from '../../src/game/rules.js'
 import type { Repositorio, VoltaRanqueada } from '../dados/tipos.js'
 import type { RaceOutcome } from '../rooms.js'
-import { formarSalas, type EntradaDaFila } from './fila.js'
+import { formarSalas, previsaoDaFila, type EntradaDaFila } from './fila.js'
 import {
   atualizarRatings,
   divisaoDe,
@@ -204,6 +204,11 @@ export class Ranqueada {
 
   naFila() {
     return this.fila.map((entrada) => ({ ...entrada }))
+  }
+
+  /** Quando a próxima sala fecha, ou quando quem está sozinho corre contra fantasmas. */
+  previsao() {
+    return previsaoDaFila(this.fila, this.agora(), this.espera, this.esperaComFantasmas)
   }
 
   /** As salas que já podem largar; quem entra numa sai da fila. */

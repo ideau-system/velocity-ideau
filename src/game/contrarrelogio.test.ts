@@ -9,6 +9,7 @@ import {
   medalhaPara,
   sementeDoDia,
   tempoDoPiloto,
+  viradaDoDia,
   type Armazenamento,
 } from './contrarrelogio'
 import { correrSemTela } from './corridaSimulada'
@@ -43,6 +44,15 @@ describe('pista do dia', () => {
   it('o dia vira à meia-noite de Brasília, e não à de Greenwich', () => {
     expect(diaDe(new Date('2026-09-23T02:59:00Z'))).toBe('2026-09-22')
     expect(diaDe(new Date('2026-09-23T03:00:00Z'))).toBe('2026-09-23')
+  })
+
+  it('a pista troca na próxima meia-noite de Brasília', () => {
+    const tarde = Date.parse('2026-09-30T15:30:12.345Z')
+    expect(viradaDoDia(tarde)).toBe(Date.parse('2026-10-01T03:00:00Z'))
+    expect(diaDe(new Date(viradaDoDia(tarde) - 1))).toBe('2026-09-30')
+    expect(diaDe(new Date(viradaDoDia(tarde)))).toBe('2026-10-01')
+    // Na própria meia-noite, a próxima virada é a de amanhã.
+    expect(viradaDoDia(Date.parse('2026-10-01T03:00:00Z'))).toBe(Date.parse('2026-10-02T03:00:00Z'))
   })
 
   it('o mesmo dia dá a mesma pista, e dias diferentes dão pistas diferentes', () => {

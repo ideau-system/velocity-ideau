@@ -356,11 +356,12 @@ export function createGameServer(options: GameServerOptions = {}): GameServer {
     })().catch((erro: unknown) => console.error('Copa:', erro instanceof Error ? erro.message : erro))
   }
 
-  /** Avisa quem está na fila de quantos esperam com ele. */
+  /** Avisa quem está na fila de quantos esperam com ele, e de quando ela vai andar. */
   const anunciarFila = () => {
     const fila = ranqueada.naFila()
+    const previsao = ranqueada.previsao()
     for (const entrada of fila) {
-      io.sockets.sockets.get(entrada.socketId)?.emit('ranqueada:fila', { tamanho: fila.length, desde: entrada.desde })
+      io.sockets.sockets.get(entrada.socketId)?.emit('ranqueada:fila', { tamanho: fila.length, desde: entrada.desde, ...previsao })
     }
   }
 
@@ -862,6 +863,13 @@ export function createGameServer(options: GameServerOptions = {}): GameServer {
       } catch {
         ack?.({ ok: false, error: 'Não foi possível ler a escada.' })
       }
+    })
+
+    // O movimento do jogo agora, aberto a todos: com pouca gente, saber quantos
+    // estão conectados, na fila e correndo é o que diz se vale esperar na fila
+    // ou chamar os amigos para uma sala.
+    socket.on('jogo:movimento', (_payload: unknown, ack?: Resposta) => {
+      ack?.({ ok: true, online: io.engine.clientsCount, naFila: ranqueada.naFila().length, ...rooms.movimento() })
     })
 
     // Fila ranqueada: só com conta, e só a fila pública conta.

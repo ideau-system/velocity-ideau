@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { tempoDoPiloto } from './contrarrelogio'
 import { correrSemTela } from './corridaSimulada'
-import { desafioDaSemana, desafiosDaSemana, inicioDaSemana, MODIFICADORES, ORDEM_DOS_DESAFIOS, regrasDo, semanaDe } from './desafios'
+import { desafioDaSemana, desafiosDaSemana, inicioDaSemana, MODIFICADORES, ORDEM_DOS_DESAFIOS, regrasDo, semanaDe, viradaDaSemana } from './desafios'
 import { pilotoCompleto, tangenciando } from './piloto'
 import { rulesFor } from './rules'
 import { speedForState } from './simulation'
@@ -13,6 +13,13 @@ describe('semana dos desafios', () => {
     expect(semanaDe(segunda)).toBe(semanaDe(domingo) + 1)
     expect(inicioDaSemana(semanaDe(segunda))).toBe('2026-09-28')
     expect(new Date(`${inicioDaSemana(semanaDe(segunda))}T12:00:00Z`).getUTCDay()).toBe(1)
+  })
+
+  it('a virada é o primeiro instante da semana seguinte', () => {
+    const semana = semanaDe(Date.parse('2026-09-30T15:00:00Z'))
+    expect(viradaDaSemana(semana)).toBe(Date.parse('2026-10-05T03:00:00Z'))
+    expect(semanaDe(viradaDaSemana(semana) - 1)).toBe(semana)
+    expect(semanaDe(viradaDaSemana(semana))).toBe(semana + 1)
   })
 
   it('cinco desafios por semana, um de cada modificador, com pistas diferentes', () => {

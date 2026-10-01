@@ -169,6 +169,12 @@ type RaceCanvasProps = {
    * contrarrelógio, o carro é só pintura: o easter egg de `turboDoPiloto` não vale.
    */
   competitivo?: boolean
+  /**
+   * A sala exige o câmbio manual — é a regra da ranqueada. A corrida larga no
+   * manual, qualquer que seja a preferência do piloto, e não deixa voltar ao
+   * automático; a preferência guardada fica como estava.
+   */
+  manualObrigatorio?: boolean
   /** Aviso de conexão exibido sobre a pista sem interromper a corrida. */
   connectionNotice?: string | null
   /** Chamado a cada medição para ser enviada ao servidor. */
@@ -546,6 +552,7 @@ function RaceCanvas({
   onRestart,
   modificador = null,
   competitivo = false,
+  manualObrigatorio = false,
   espectadores = 0,
   connectionNotice = null,
   onTelemetry,
@@ -592,7 +599,9 @@ function RaceCanvas({
   /** O aviso curto da vez: uma batida é alerta; um mini-turbo, prêmio. Cada tipo mora de um lado. */
   const [flash, setFlash] = useState<{ texto: string; tipo: 'alerta' | 'premio' } | null>(null)
   /** O câmbio desta corrida: manual, com as borboletas e a troca perfeita, ou automático. */
-  const [cambioManual, setCambioManual] = useState(() => lerCambio() === 'manual')
+  const [cambioManual, setCambioManual] = useState(() => manualObrigatorio || lerCambio() === 'manual')
+  // A regra vem da sala e vale a corrida inteira: a corrida nasce de novo a cada largada.
+  const manualObrigatorioRef = useRef(manualObrigatorio)
   /** Aparelho de toque: o pé fica no fundo sozinho e o freio mora ao lado do boost. */
   const [deToque] = useState(aparelhoDeToque)
   /** A última troca de marcha que merece comentário, e quantas trocas perfeitas vieram seguidas. */
@@ -735,6 +744,9 @@ function RaceCanvas({
    * mudou — o servidor refaz a volta com a troca no mesmo quadro.
    */
   const definirCambioManual = useCallback((manual: boolean) => {
+    // Na sala de câmbio manual não há o que trocar, e a regra dela não vira a
+    // preferência do piloto para as outras corridas.
+    if (manualObrigatorioRef.current) return
     comandosRef.current.manual = manual
     definirCambio(manual ? 'manual' : 'automatico')
     setCambioManual(manual)
@@ -747,7 +759,7 @@ function RaceCanvas({
   // Os comandos nascem com o câmbio escolhido e, no aparelho de toque, com o
   // pé no fundo: os dois polegares já têm o que fazer.
   useEffect(() => {
-    comandosRef.current.manual = lerCambio() === 'manual'
+    comandosRef.current.manual = manualObrigatorioRef.current || lerCambio() === 'manual'
     comandosRef.current.aceleradorAutomatico = aparelhoDeToque()
   }, [])
 
@@ -3106,20 +3118,32 @@ function RaceCanvas({
           {!espectador && (
             <div className="marcha-bloco">
               <b ref={marchaRef} className="marcha" aria-hidden="true">1</b>
-              <button
-                type="button"
-                className={`modo-do-cambio ${cambioManual ? 'manual' : ''}`}
-                onClick={(event) => {
-                  alternarCambio()
-                  // Sem foco no botão: o espaço é o boost, e não um clique nele.
-                  event.currentTarget.blur()
-                }}
-                aria-pressed={cambioManual}
-                aria-label={cambioManual ? 'Câmbio manual: trocar para o automático' : 'Câmbio automático: trocar para o manual'}
-                title={cambioManual ? 'Câmbio manual (E sobe, Q reduz). Clique para o automático.' : 'Câmbio automático. Clique para o manual.'}
-              >
-                {cambioManual ? 'MANUAL' : 'AUTO'}
-              </button>
+              {manualObrigatorio ? (
+                // A regra da sala: o manual não tem volta, e o botão diz por quê.
+                <span
+                  className="modo-do-cambio manual obrigatorio"
+                  role="img"
+                  aria-label="Câmbio manual, obrigatório nesta sala"
+                  title="Câmbio manual obrigatório nesta sala: E sobe, Q reduz."
+                >
+                  MANUAL
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className={`modo-do-cambio ${cambioManual ? 'manual' : ''}`}
+                  onClick={(event) => {
+                    alternarCambio()
+                    // Sem foco no botão: o espaço é o boost, e não um clique nele.
+                    event.currentTarget.blur()
+                  }}
+                  aria-pressed={cambioManual}
+                  aria-label={cambioManual ? 'Câmbio manual: trocar para o automático' : 'Câmbio automático: trocar para o manual'}
+                  title={cambioManual ? 'Câmbio manual (E sobe, Q reduz). Clique para o automático.' : 'Câmbio automático. Clique para o manual.'}
+                >
+                  {cambioManual ? 'MANUAL' : 'AUTO'}
+                </button>
+              )}
               {notaDaTroca && (
                 <em key={notaDaTroca.vez} className={`nota-da-troca ${notaDaTroca.qualidade}`}>
                   {NOTA_DA_TROCA[notaDaTroca.qualidade]}

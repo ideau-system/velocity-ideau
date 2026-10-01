@@ -18,6 +18,17 @@ export type LobbyPlayer = {
 
 export type LobbyStatus = 'waiting' | 'ready' | 'countdown' | 'racing' | 'finished'
 
+/** Livre: cada piloto escolhe manual ou automático. Manual: todos trocam as marchas. */
+export type RegraDoCambio = 'livre' | 'manual'
+
+/**
+ * A regra do câmbio de uma sala. Um servidor anterior à regra não a manda: a
+ * ranqueada, então, é manual do mesmo jeito.
+ */
+export function regraDoCambio(room: Pick<LobbyRoom, 'cambio' | 'ranqueada'> | null | undefined): RegraDoCambio {
+  return room?.cambio ?? (room?.ranqueada ? 'manual' : 'livre')
+}
+
 export type LobbyRoom = {
   code: string
   players: LobbyPlayer[]
@@ -36,6 +47,8 @@ export type LobbyRoom = {
   ranqueada?: boolean
   /** Sala de uma rodada da Copa do Dia: largada automática, e o último sai. */
   copa?: { divisao: number; rodada: number }
+  /** O câmbio da sala: livre, cada piloto escolhe o seu; manual, obrigatório — o da ranqueada. */
+  cambio?: RegraDoCambio
   /** Quem assiste da arquibancada: fora das vagas do grid. */
   spectators?: LobbySpectator[]
 }

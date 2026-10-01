@@ -48,3 +48,29 @@ export function formarSalas(fila: readonly EntradaDaFila[], agora: number, esper
   const restantes = salas.length > 1 && salas[salas.length - 1].length < MINIMO_POR_SALA ? salas.pop()! : []
   return { salas, restantes }
 }
+
+/** O que a fila promete a quem espera nela, no relógio do servidor. */
+export type PrevisaoDaFila = {
+  /** Quando a próxima sala fecha, se já há gente para ela. */
+  salaEm: number | null
+  /** Quando quem está sozinho passa a correr contra fantasmas. */
+  fantasmasEm: number | null
+}
+
+/**
+ * Quando a fila vai andar: com gente para uma sala, ela fecha na hora com seis,
+ * ou quando o primeiro da fila completar a espera; sozinho, é a hora dos
+ * fantasmas. A mesma conta de `formarSalas`, para a tela não prometer o que a
+ * fila não cumpre.
+ */
+export function previsaoDaFila(
+  fila: readonly EntradaDaFila[],
+  agora: number,
+  espera = ESPERA_DA_FILA_MS,
+  esperaComFantasmas: number,
+): PrevisaoDaFila {
+  if (fila.length === 0) return { salaEm: null, fantasmasEm: null }
+  const primeiro = Math.min(...fila.map((entrada) => entrada.desde))
+  if (fila.length < MINIMO_POR_SALA) return { salaEm: null, fantasmasEm: primeiro + esperaComFantasmas }
+  return { salaEm: fila.length >= PILOTOS_POR_SALA ? agora : primeiro + espera, fantasmasEm: null }
+}

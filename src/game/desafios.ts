@@ -29,7 +29,7 @@ type DefinicaoDoModificador = {
 export const MODIFICADORES: Record<Modificador, DefinicaoDoModificador> = {
   classico: {
     nome: 'Clássico',
-    descricao: 'A pista pura, no nível oficial.',
+    descricao: 'A pista pura, no nível difícil.',
     dificuldade: 'dificil',
     regras: (base) => base,
   },
@@ -87,6 +87,11 @@ export function semanaDe(instante: number) {
 /** A segunda-feira que abre a semana, `AAAA-MM-DD`. */
 export function inicioDaSemana(semana: number) {
   return new Date(semana * SEMANA_MS + INICIO_DA_SEMANA_MS).toISOString().slice(0, 10)
+}
+
+/** O instante em que a semana vira e os desafios trocam: a segunda seguinte, à meia-noite de Brasília. */
+export function viradaDaSemana(semana: number) {
+  return (semana + 1) * SEMANA_MS + INICIO_DA_SEMANA_MS
 }
 
 /** Os cinco desafios de uma semana. Mesma semana, mesmos desafios, em qualquer aparelho. */
