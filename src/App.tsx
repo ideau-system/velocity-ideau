@@ -1,6 +1,6 @@
 import type { AuthChangeEvent } from '@supabase/supabase-js'
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { carById, DEFAULT_CAR, toCarId, type CarId } from './game/cars'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { DEFAULT_CAR, toCarId, type CarId } from './game/cars'
 import { carImageUrl, precarregarCarro } from './game/carSprites'
 import { aoMudarASessao, sair as sairDoSupabase, sessaoAtual, type SessaoDaConta } from './conta/conta'
 import Entrada, { type ModoDaEntrada } from './conta/Entrada'
@@ -14,7 +14,6 @@ import {
   lerRecorde,
   limitesDasMedalhas,
   medalhaPara,
-  MEDALHAS,
   NOME_DA_MEDALHA,
   sementeDoDia,
   tempoDoPiloto,
@@ -27,12 +26,16 @@ import { DEFAULT_COUNTDOWN_MS } from './game/countdown'
 import { desafiosDaSemana, MODIFICADORES, semanaDe, type Desafio, type Modificador } from './game/desafios'
 import { GhostTracker, type GhostSnapshot } from './game/ghost'
 import RaceCanvas, { type RaceResult } from './game/RaceCanvas'
-import { DIFFICULTIES, DIFFICULTY_LABELS, DIFFICULTY_NOTES, type Difficulty } from './game/rules'
+import type { Difficulty } from './game/rules'
 import { formatTime } from './game/track'
 import type { GravacaoDeVolta } from './game/gravador'
 import { serverClock, type ClockState } from './multiplayer/clock'
 import { identificadorDoPiloto } from './multiplayer/identity'
 import Lobby from './multiplayer/Lobby'
+import BarraDaFila from './menu/BarraDaFila'
+import { guardarModoDoMenu, lerModoDoMenu, type ModoDoMenu } from './menu/modos'
+import Paddock from './menu/Paddock'
+import { buscarMovimento, type MovimentoDoJogo } from './multiplayer/movimento'
 import {
   apelidoLivre,
   entrarNaConta,
@@ -50,15 +53,7 @@ import {
   type ResultadoRanqueado,
   type SituacaoDaRanqueada,
 } from './multiplayer/ranqueada'
-import Ranqueada from './ranqueada/Ranqueada'
-import {
-  buscarCopa,
-  inscreverNaCopa,
-  sairDaCopa,
-  TACA,
-  type RodadaDaCopa,
-  type SituacaoDaCopa,
-} from './multiplayer/copa'
+import { buscarCopa, inscreverNaCopa, sairDaCopa, TACA, type RodadaDaCopa, type SituacaoDaCopa } from './multiplayer/copa'
 import {
   abrirTentativa,
   baixarFantasma,
@@ -76,16 +71,17 @@ import Perfil from './perfil/Perfil'
 import PilotSelect from './PilotSelect'
 import Ranking, { type AbaDoRanking } from './ranking/Ranking'
 import ResumoDaProva from './ResumoDaProva'
-import type {
-  LobbyRoom,
-  RaceCancelled,
-  RaceOutcome,
-  RivalTelemetry,
-  RoomResponse,
-  ScheduledRace,
+import {
+  regraDoCambio,
+  type LobbyRoom,
+  type RaceCancelled,
+  type RaceOutcome,
+  type RivalTelemetry,
+  type RoomResponse,
+  type ScheduledRace,
 } from './multiplayer/types'
 
-type Screen = 'menu' | 'garage' | 'lobby' | 'race' | 'result' | 'ranqueada' | 'entrada' | 'perfil' | 'ranking'
+type Screen = 'menu' | 'garage' | 'lobby' | 'race' | 'result' | 'entrada' | 'perfil' | 'ranking'
 type RaceSetup = {
   startAt: number
   countdownMs: number
@@ -172,6 +168,10 @@ const storedRole: Papel = storedRoom && lerGuardado(ROLE_KEY) === 'espectador' ?
  * ninguém vai ficar clicando.
  */
 const linkDeAssistir = new URLSearchParams(location.search).get('assistir') === '1'
+/** O código que veio no link de convite: o paddock abre na sala com amigos, com ele já digitado. */
+const codigoDoConvite = new URLSearchParams(location.search).get('room')?.toUpperCase() ?? ''
+/** Um convite de verdade, e não a volta de quem recarregou a página dentro de uma sala. */
+const abriuPorConvite = codigoDoConvite !== '' && !storedRoom && !linkDeAssistir
 
 /**
  * O carro, ao contrário da sala e do nome, fica guardado entre visitas: é uma
@@ -210,9 +210,6 @@ function armazenamentoLocal(): Armazenamento | null {
   }
 }
 
-/** A cor do carro vira variável de CSS para bordas e destaques. */
-const destaque = (car: CarId) => ({ '--accent': carById(car).accent }) as CSSProperties
-
 /** Quem escolheu correr sem conta: a porta de entrada não abre mais sozinha para ele. */
 const CONVIDADO_KEY = 'corrida-convidado'
 
@@ -247,11 +244,21 @@ const abrirNaEntrada = !storedRoom && !linkDeAssistir && !comContaGuardada && !v
 /** O cliente das contas só é acompanhado uma vez por página, e só por quem precisa dele. */
 let acompanhandoAConta = false
 
+/** A fila ainda não disse quando anda. */
+const SEM_PREVISAO = { salaEm: null, fantasmasEm: null }
+
 function App() {
   const [screen, setScreen] = useState<Screen>(abrirNaEntrada ? 'entrada' : 'menu')
   const [pilotName, setPilotName] = useState(storedName)
   const [draftName, setDraftName] = useState('')
-  const [joinCode, setJoinCode] = useState(() => new URLSearchParams(location.search).get('room')?.toUpperCase() ?? '')
+  const [joinCode, setJoinCode] = useState(codigoDoConvite)
+  /** O código digitado é o do link de convite, e o piloto ainda não entrou em sala nenhuma. */
+  const [convite, setConvite] = useState(abriuPorConvite)
+  /** O modo escolhido no paddock, e se o painel dele está aberto no lugar da lista (tela estreita). */
+  const [modoDoMenu, setModoDoMenu] = useState<ModoDoMenu>(() => (abriuPorConvite ? 'sala' : lerModoDoMenu()))
+  const [detalheAberto, setDetalheAberto] = useState(abriuPorConvite)
+  /** Quantos estão no jogo, na fila e correndo, e a latência da última pergunta. */
+  const [movimento, setMovimento] = useState<MovimentoDoJogo | null>(null)
   const [room, setRoom] = useState<LobbyRoom | null>(null)
   const [lobbyError, setLobbyError] = useState('')
   const [lobbyNotice, setLobbyNotice] = useState('')
@@ -312,13 +319,17 @@ function App() {
   const [naFila, setNaFila] = useState(false)
   const [tamanhoDaFila, setTamanhoDaFila] = useState(0)
   const [naFilaDesde, setNaFilaDesde] = useState<number | null>(null)
+  /** O que o servidor promete da fila: quando a sala fecha, ou quando os fantasmas entram. */
+  const [previsaoDaFila, setPrevisaoDaFila] = useState<{ salaEm: number | null; fantasmasEm: number | null }>(SEM_PREVISAO)
+  const naFilaRef = useRef(naFila)
+  naFilaRef.current = naFila
   const [avisoRanqueado, setAvisoRanqueado] = useState('')
   const [resultadosRanqueados, setResultadosRanqueados] = useState<ResultadoRanqueado[] | null>(null)
   /** A Copa do Dia: a situação de hoje e o que a última rodada decidiu. */
   const [copa, setCopa] = useState<SituacaoDaCopa | null>(null)
   const [rodadaDaCopa, setRodadaDaCopa] = useState<RodadaDaCopa | null>(null)
   const [avisoDaCopa, setAvisoDaCopa] = useState('')
-  /** Bate uma vez por segundo enquanto há relógio da copa na tela. */
+  /** Bate enquanto o resultado mostra a contagem até a próxima rodada da copa. */
   const [, setTique] = useState(0)
 
   /**
@@ -381,6 +392,9 @@ function App() {
 
   useEffect(() => serverClock.subscribe(setClock), [])
 
+  // O modo do paddock fica entre visitas, venha a escolha do piloto ou da fila.
+  useEffect(() => guardarModoDoMenu(modoDoMenu), [modoDoMenu])
+
   /**
    * O que depende de quem está conectado: o quadro de hoje, os desafios e a
    * copa valem para todos — o convidado vê, só não aparece —, e a ranqueada é
@@ -390,7 +404,7 @@ function App() {
     void buscarQuadro(socket).then(setQuadroDoDia)
     void buscarDesafios(socket).then(setDesafiosDoServidor)
     void buscarCopa(socket).then(setCopa)
-    void buscarQuadro(socket, { circuito: 'oficial' }, 3).then(setRankingMundial)
+    void buscarQuadro(socket, { circuito: 'oficial' }, 5).then(setRankingMundial)
     if (perfilRef.current) void buscarSituacao(socket).then(setSituacaoRanqueada)
     else setSituacaoRanqueada(null)
   }, [])
@@ -446,6 +460,7 @@ function App() {
     setSituacaoRanqueada(null)
     setNaFila(false)
     setNaFilaDesde(null)
+    setPrevisaoDaFila(SEM_PREVISAO)
     if (socket.connected) void sairDaConta(socket)
     lerOQueMudaComAConta()
   }, [lerOQueMudaComAConta])
@@ -553,7 +568,18 @@ function App() {
       })
     }
 
-    const onDisconnect = () => setConnection('reconnecting')
+    const onDisconnect = () => {
+      setConnection('reconnecting')
+      setMovimento(null)
+      // O servidor tira da fila quem cai: a barra não pode seguir contando uma
+      // busca que já não existe.
+      if (naFilaRef.current) {
+        setNaFila(false)
+        setNaFilaDesde(null)
+        setPrevisaoDaFila(SEM_PREVISAO)
+        setAvisoRanqueado('A conexão caiu e você saiu da fila. Busque de novo quando ela voltar.')
+      }
+    }
     const onRoomUpdate = (nextRoom: LobbyRoom) => setRoom(nextRoom)
 
     const onScheduled = (payload: ScheduledRace) => {
@@ -606,12 +632,14 @@ function App() {
       setRoom(payload.room)
       setNaFila(false)
       setNaFilaDesde(null)
+      setPrevisaoDaFila(SEM_PREVISAO)
       setResultadosRanqueados(null)
       setAvisoRanqueado('')
     }
-    const onFila = (payload: { tamanho: number; desde: number }) => {
+    const onFila = (payload: { tamanho: number; desde: number; salaEm?: number | null; fantasmasEm?: number | null }) => {
       setTamanhoDaFila(payload.tamanho)
       setNaFilaDesde(payload.desde)
+      setPrevisaoDaFila({ salaEm: payload.salaEm ?? null, fantasmasEm: payload.fantasmasEm ?? null })
     }
     // A largada caiu antes de sair: ninguém ganha nem perde, e quem ficou volta
     // para a fila sozinho.
@@ -623,11 +651,14 @@ function App() {
       voltarAPiloto()
       setRoom(null)
       setRaceSetup(null)
-      setScreen('ranqueada')
+      // De volta ao paddock, na ranqueada, com a busca recomeçando sozinha.
+      setScreen('menu')
+      setModoDoMenu('ranqueada')
+      setDetalheAberto(true)
       setAvisoRanqueado(payload.motivo)
       void entrarNaFila(socket, { playerId: storedPlayerId, carro: carRef.current }).then((entrada) => {
         setNaFila(entrada.ok)
-        if (entrada.ok) setNaFilaDesde(Date.now())
+        if (entrada.ok) setNaFilaDesde(serverClock.now())
       })
     }
     const onResultadosRanqueados = (payload: { code: string; resultados: ResultadoRanqueado[] }) => {
@@ -687,18 +718,24 @@ function App() {
     }
   }, [])
 
-  // No menu, a copa se atualiza sozinha: a fase muda com o relógio, e a
+  // No paddock, a copa se atualiza sozinha: a fase muda com o relógio, e a
   // classificação com as voltas dos outros.
   const faseDaCopa = copa?.fase ?? null
   useEffect(() => {
     if (screen !== 'menu' || connection !== 'connected') return
-    const relogio = window.setInterval(() => setTique((tique) => tique + 1), 1_000)
     const releitura = window.setInterval(() => void buscarCopa(socket).then(setCopa), 15_000)
-    return () => {
-      window.clearInterval(relogio)
-      window.clearInterval(releitura)
-    }
+    return () => window.clearInterval(releitura)
   }, [screen, connection, faseDaCopa])
+
+  // E o movimento do jogo — quantos estão online, na fila e correndo — a cada
+  // dez segundos. A mesma pergunta mede a latência que a barra de cima mostra.
+  useEffect(() => {
+    if (screen !== 'menu' || connection !== 'connected') return
+    const ler = () => void buscarMovimento(socket).then((novo) => novo && setMovimento(novo))
+    ler()
+    const releitura = window.setInterval(ler, 10_000)
+    return () => window.clearInterval(releitura)
+  }, [screen, connection])
 
   // Na tela de resultado, a contagem até a próxima rodada da copa.
   const proximaRodadaEm = rodadaDaCopa?.proximaEm ?? null
@@ -730,9 +767,13 @@ function App() {
     setResult(null)
     setOutcome(null)
     // Quem estava na garagem, vindo do lobby, também vai para a largada: a
-    // confirmação dele continua valendo enquanto escolhe.
+    // confirmação dele continua valendo enquanto escolhe. E a fila da ranqueada
+    // acompanha o piloto pelo paddock, pelo perfil e pelo ranking: a partida
+    // que ela acha chama de qualquer um deles.
     setScreen((current) =>
-      current === 'result' || current === 'lobby' || current === 'garage' || current === 'ranqueada' ? 'race' : current,
+      current === 'result' || current === 'lobby' || current === 'garage' || current === 'menu' || current === 'perfil' || current === 'ranking'
+        ? 'race'
+        : current,
     )
   }, [room?.startAt, room?.status, room?.countdownMs])
 
@@ -753,6 +794,7 @@ function App() {
     setPapel(novoPapel)
     papelRef.current = novoPapel
     setRoom(nextRoom)
+    setConvite(false)
     setLobbyError('')
     setLobbyNotice('')
     // Quem chega à arquibancada no meio da prova vai direto para a pista: o
@@ -762,7 +804,17 @@ function App() {
   }
   abrirSalaRef.current = openRoom
 
+  /**
+   * Outra prova não larga com a busca da ranqueada em andamento: a partida que
+   * a fila achasse no meio dela correria sem o piloto. O paddock já trava os
+   * botões; o ranking e o perfil, que também largam provas, passam por aqui.
+   */
+  const largarAFila = () => {
+    if (naFilaRef.current) void sairDaFilaRanqueada()
+  }
+
   const createRoom = () => {
+    largarAFila()
     socket.emit('room:create', { name: selectedName(), playerId: storedPlayerId, car }, (response: RoomResponse) => {
       if (response.ok && response.room) openRoom(response.room)
       else setLobbyError(response.error ?? 'Não foi possível criar a sala.')
@@ -772,6 +824,7 @@ function App() {
   const enterRoom = () => {
     const code = joinCode.trim().toUpperCase()
     if (!code) return setLobbyError('Digite o código da sala.')
+    largarAFila()
     socket.emit('room:join', { code, name: selectedName(), playerId: storedPlayerId, car }, (response: RoomResponse) => {
       if (response.ok && response.room) openRoom(response.room)
       else setLobbyError(response.error ?? 'Não foi possível entrar na sala.')
@@ -782,6 +835,7 @@ function App() {
   const spectateRoom = () => {
     const code = joinCode.trim().toUpperCase()
     if (!code) return setLobbyError('Digite o código da sala.')
+    largarAFila()
     socket.emit('room:spectate', { code, name: selectedName(), spectatorId: storedPlayerId }, (response: RoomResponse) => {
       if (response.ok && response.room) openRoom(response.room, 'espectador')
       else setLobbyError(response.error ?? 'Não foi possível assistir a esta sala.')
@@ -835,6 +889,7 @@ function App() {
   )
 
   const startSoloRace = () => {
+    largarAFila()
     selectedName()
     setResult(null)
     // No treino não há com quem sincronizar: cada volta estreia um traçado.
@@ -855,6 +910,7 @@ function App() {
    * caminho: tentar de novo não pode custar mais que desistir.
    */
   const startTimeTrial = async (contra: FantasmaDeOutro | null = null, desafio: Desafio | null = null, oficial = false) => {
+    largarAFila()
     selectedName()
     const dia = diaDe(new Date())
     // Sem desafio é a Pista do Dia; com um, a semente, o nível e o modificador dele.
@@ -882,12 +938,15 @@ function App() {
     setScreen('race')
   }
 
-  /** Abre a tela da ranqueada, com o painel e a escada frescos. */
-  const abrirRanqueada = () => {
-    selectedName()
-    setAvisoRanqueado('')
-    setScreen('ranqueada')
-    if (socket.connected) void buscarSituacao(socket).then(setSituacaoRanqueada)
+  /**
+   * Escolhe um modo no paddock. `abrir` leva ao painel dele na tela estreita,
+   * onde a lista e o painel não cabem juntos. Na ranqueada, o painel do piloto
+   * e a escada chegam frescos.
+   */
+  const escolherModo = (modo: ModoDoMenu, abrir: boolean) => {
+    setModoDoMenu(modo)
+    if (abrir) setDetalheAberto(true)
+    if (modo === 'ranqueada' && perfilRef.current && socket.connected) void buscarSituacao(socket).then(setSituacaoRanqueada)
   }
 
   const entrarNaFilaRanqueada = async () => {
@@ -895,8 +954,10 @@ function App() {
     const entrada = await entrarNaFila(socket, { playerId: storedPlayerId, carro: carRef.current })
     if (entrada.ok) {
       setNaFila(true)
-      setNaFilaDesde(Date.now())
+      // O relógio da fila é o do servidor: é nele que chegam o início e a previsão.
+      setNaFilaDesde(serverClock.now())
       setTamanhoDaFila(1)
+      setPrevisaoDaFila(SEM_PREVISAO)
       return
     }
     setAvisoRanqueado(entrada.motivo)
@@ -904,9 +965,10 @@ function App() {
   }
 
   const sairDaFilaRanqueada = async () => {
-    await sairDaFila(socket)
     setNaFila(false)
     setNaFilaDesde(null)
+    setPrevisaoDaFila(SEM_PREVISAO)
+    await sairDaFila(socket)
   }
 
   /** Deixa a sala ranqueada que terminou. */
@@ -922,10 +984,12 @@ function App() {
     void buscarSituacao(socket).then(setSituacaoRanqueada)
   }
 
-  /** Depois da corrida ranqueada: sai da sala e volta para a fila. */
+  /** Depois da corrida ranqueada: sai da sala e volta para a fila, no paddock. */
   const voltarParaAFila = () => {
     deixarSalaRanqueada()
-    setScreen('ranqueada')
+    setModoDoMenu('ranqueada')
+    setDetalheAberto(true)
+    setScreen('menu')
     void entrarNaFilaRanqueada()
   }
 
@@ -1024,6 +1088,14 @@ function App() {
    */
   const semanaAtual = semanaDe(Date.now())
   const desafios = useMemo(() => desafiosDaSemana(semanaAtual), [semanaAtual])
+  // A versão não entra na conta, mas é ela que diz quando reler os recordes.
+  const recordesDosDesafios = useMemo(
+    () =>
+      new Map(
+        desafios.map((desafio) => [desafio.id, versaoDosRecordes >= 0 ? lerRecorde(armazenamentoLocal(), desafio.seed, desafio.dificuldade) : null]),
+      ),
+    [desafios, versaoDosRecordes],
+  )
 
   /** Baixa o fantasma de uma linha do quadro e larga a pista dele — a do dia ou o Circuito Oficial. */
   const correrContra = async (linha: LinhaDoQuadro, quadro: 'dia' | 'mundial' = 'dia') => {
@@ -1103,7 +1175,7 @@ function App() {
           if (veredito?.copa) void buscarCopa(socket).then(setCopa)
           void buscarQuadro(socket).then(setQuadroDoDia)
           void buscarDesafios(socket).then(setDesafiosDoServidor)
-          if (prova.oficial) void buscarQuadro(socket, { circuito: 'oficial' }, 3).then((quadro) => quadro && setRankingMundial(quadro))
+          if (prova.oficial) void buscarQuadro(socket, { circuito: 'oficial' }, 5).then((quadro) => quadro && setRankingMundial(quadro))
         })
       }
       setScreen('result')
@@ -1158,40 +1230,58 @@ function App() {
     )
   }
 
+  /** Fora do paddock, a busca da ranqueada continua à vista, flutuando. */
+  const filaFlutuante = naFila ? (
+    <BarraDaFila
+      flutuante
+      tamanho={tamanhoDaFila}
+      desde={naFilaDesde}
+      salaEm={previsaoDaFila.salaEm}
+      fantasmasEm={previsaoDaFila.fantasmasEm}
+      onCancelar={() => void sairDaFilaRanqueada()}
+    />
+  ) : null
+
   if (screen === 'perfil') {
     const proprio = perfilAberto === null || perfilAberto === perfil?.id
     return (
-      <Perfil
-        perfil={perfilVisto}
-        carregando={perfilCarregando}
-        erro={perfilErro}
-        proprio={proprio}
-        email={proprio ? sessao?.email : null}
-        onVoltar={() => setScreen(perfilVoltaPara)}
-        onSair={proprio ? () => void sairDaContaAgora() : undefined}
-        onCorrerCircuito={() => void startTimeTrial(null, null, true)}
-      />
+      <>
+        <Perfil
+          perfil={perfilVisto}
+          carregando={perfilCarregando}
+          erro={perfilErro}
+          proprio={proprio}
+          email={proprio ? sessao?.email : null}
+          onVoltar={() => setScreen(perfilVoltaPara)}
+          onSair={proprio ? () => void sairDaContaAgora() : undefined}
+          onCorrerCircuito={() => void startTimeTrial(null, null, true)}
+        />
+        {filaFlutuante}
+      </>
     )
   }
 
   if (screen === 'ranking') {
     return (
-      <Ranking
-        aba={abaDoRanking}
-        onAba={setAbaDoRanking}
-        mundial={rankingMundial}
-        dia={rankingDoDia}
-        escada={escadaDoRanking}
-        carregando={rankingCarregando}
-        conectado={connection === 'connected'}
-        meuPerfil={perfil?.id ?? null}
-        onVerPiloto={(id) => abrirPerfil(id, 'ranking')}
-        onCorrerContra={(linha, quadro) => void correrContra(linha, quadro)}
-        onCorrerCircuito={() => void startTimeTrial(null, null, true)}
-        onCorrerPistaDoDia={() => void startTimeTrial()}
-        onEntrar={perfil || entrandoNaConta ? undefined : () => abrirEntrada('entrar', 'ranking')}
-        onVoltar={() => setScreen(rankingVoltaPara)}
-      />
+      <>
+        <Ranking
+          aba={abaDoRanking}
+          onAba={setAbaDoRanking}
+          mundial={rankingMundial}
+          dia={rankingDoDia}
+          escada={escadaDoRanking}
+          carregando={rankingCarregando}
+          conectado={connection === 'connected'}
+          meuPerfil={perfil?.id ?? null}
+          onVerPiloto={(id) => abrirPerfil(id, 'ranking')}
+          onCorrerContra={(linha, quadro) => void correrContra(linha, quadro)}
+          onCorrerCircuito={() => void startTimeTrial(null, null, true)}
+          onCorrerPistaDoDia={() => void startTimeTrial()}
+          onEntrar={perfil || entrandoNaConta ? undefined : () => abrirEntrada('entrar', 'ranking')}
+          onVoltar={() => setScreen(rankingVoltaPara)}
+        />
+        {filaFlutuante}
+      </>
     )
   }
 
@@ -1206,30 +1296,6 @@ function App() {
         backLabel={garageFrom === 'lobby' ? 'VOLTAR AO LOBBY' : 'VOLTAR AO PADDOCK'}
         onConfirm={chooseCar}
         onBack={leaveGarage}
-      />
-    )
-  }
-
-  if (screen === 'ranqueada') {
-    return (
-      <Ranqueada
-        perfil={perfil}
-        situacao={situacaoRanqueada}
-        conectado={connection === 'connected'}
-        naFila={naFila}
-        tamanhoDaFila={tamanhoDaFila}
-        naFilaDesde={naFilaDesde}
-        aviso={avisoRanqueado}
-        entrandoNaConta={entrandoNaConta}
-        onEntrar={() => void entrarNaFilaRanqueada()}
-        onSair={() => void sairDaFilaRanqueada()}
-        onVoltar={() => {
-          if (naFila) void sairDaFilaRanqueada()
-          setScreen('menu')
-        }}
-        onVerPerfil={() => abrirPerfil(null, 'ranqueada')}
-        onVerRanking={() => abrirRanking('ranqueada', 'ranqueada')}
-        onEntrarNaConta={() => abrirEntrada('entrar', 'ranqueada')}
       />
     )
   }
@@ -1294,6 +1360,8 @@ function App() {
         }
         modificador={raceSetup.modificador ?? null}
         competitivo={online && Boolean(room?.ranqueada || room?.copa)}
+        // O câmbio é da sala: livre nas salas com amigos e na copa, manual na ranqueada.
+        manualObrigatorio={online && !assistindo && regraDoCambio(room) === 'manual'}
         onFinish={finishRace}
       />
     )
@@ -1606,430 +1674,82 @@ function App() {
     )
   }
 
-  // A fase da copa anda com o relógio: a tela não espera a próxima releitura
-  // para abrir a classificação no segundo em que ela abre.
-  const copaVista = copa ? { ...copa, fase: faseNoRelogio(copa, serverClock.now()) } : null
-
   return (
-    <main className="screen menu-screen">
-      <div className="ambient-grid" />
-      <header className="site-header">
-        <div className="logo"><i /><span>CORRIDA<br /><b>FANTASMA</b></span></div>
-        <div className="header-meta">
-          <div className="institutional-mark">
-            <img src="/iedau.jpeg" alt="Faculdades IDEAU" />
-            <span>PROJETO<br />ACADÊMICO</span>
-          </div>
-          <span className="build-tag">PROTÓTIPO // 002</span>
-          {/* A conta: o nome leva ao perfil; o convidado vê onde entrar. */}
-          {perfil ? (
-            <button type="button" className="conta-chip on" onClick={() => abrirPerfil(null, 'menu')}>
-              <i aria-hidden="true" />
-              <span>{perfil.apelido}<small>SEU PERFIL</small></span>
-            </button>
-          ) : contaSemServidor && sessao ? (
-            <button type="button" className="conta-chip" onClick={religarAConta}>
-              <span>SUA CONTA<small>SEM RESPOSTA · TENTAR DE NOVO</small></span>
-            </button>
-          ) : entrandoNaConta ? (
-            <span className="conta-chip"><span>ENTRANDO…<small>NA SUA CONTA</small></span></span>
-          ) : (
-            <button type="button" className="conta-chip" onClick={() => abrirEntrada('entrar', 'menu')}>
-              <span>CONVIDADO<small>ENTRAR OU CRIAR CONTA</small></span>
-            </button>
-          )}
-        </div>
-      </header>
-
-      <div className="menu-content">
-        <section className="menu-hero">
-          <div className="hero-heading">
-            <p className="eyebrow">CORRIDA MULTIPLAYER EM TEMPO REAL</p>
-            <h1>DOMINE O<br /><em>ASFALTO.</em></h1>
-            <p className="hero-copy">Uma volta decisiva, largada sincronizada e até seis pilotos disputando o mesmo traçado.</p>
-          </div>
-
-          <button type="button" className="hero-car" style={destaque(car)} onClick={() => openGarage('menu')}>
-            <span className="hero-car-number" aria-hidden="true">{carById(car).number}</span>
-            <img src={carImageUrl(car)} alt={`Carro de ${carById(car).driver}`} />
-            <span className="hero-car-caption">
-              <small>PILOTO SELECIONADO</small>
-              <strong>{carById(car).driver}</strong>
-              <em>{carById(car).team} · #{carById(car).number}</em>
-            </span>
-            <span className="hero-car-action">TROCAR <b>↗</b></span>
-          </button>
-
-          <dl className="race-facts">
-            <div><dt>FORMATO</dt><dd>1 VOLTA</dd></div>
-            <div><dt>GRID</dt><dd>2—6 PILOTOS</dd></div>
-            <div><dt>SINCRONIA</dt><dd>{clock.synced ? `±${Math.round(clock.roundTrip / 2)} MS` : 'CONECTANDO'}</dd></div>
-          </dl>
-        </section>
-
-        <section className="start-panel" aria-labelledby="start-title">
-          <header className="start-panel-header">
-            <span className="panel-step">01</span>
-            <div>
-              <p className="eyebrow">PREPARE-SE PARA A LARGADA</p>
-              <h2 id="start-title">ENTRE NA PISTA</h2>
-            </div>
-            <span className={`server-status ${connection === 'connected' ? 'online' : ''}`}>
-              <i /> {connection === 'connected' ? 'SERVIDOR ONLINE' : 'CONECTANDO'}
-            </span>
-          </header>
-
-          {perfil ? (
-            <p className="identity-conta">
-              PILOTANDO COMO <b>{perfil.apelido}</b>
-              <button type="button" className="text-button" onClick={() => abrirRanking('mundial', 'menu')}>RANKING MUNDIAL ↗</button>
-            </p>
-          ) : (
-            <div className="identity-field">
-              <label htmlFor="pilot-name">NOME DO PILOTO</label>
-              <input id="pilot-name" value={draftName} maxLength={16} onChange={(event) => setDraftName(event.target.value)} placeholder={pilotName} autoComplete="nickname" />
-            </div>
-          )}
-
-          {connection !== 'connected' && <p className="form-notice">PROCURANDO O SERVIDOR DA PARTIDA…</p>}
-          {lobbyError && <p className="form-error">{lobbyError}</p>}
-
-          <div className="mode-list">
-            <section className="mode-card online-mode">
-              <header className="mode-heading">
-                <span>01</span>
-                <div>
-                  <p>ATÉ SEIS PILOTOS</p>
-                  <h3>CORRIDA ONLINE</h3>
-                </div>
-              </header>
-              <p className="mode-copy">Crie um grid e envie o convite, ou use o código de uma sala existente.</p>
-              <button className="primary-button create-room-button" onClick={createRoom} disabled={connection !== 'connected'}>
-                CRIAR NOVA SALA <span>↗</span>
-              </button>
-              <div className="join-divider"><span>JÁ TEM UM CÓDIGO?</span></div>
-              <div className="join-control">
-                <input value={joinCode} maxLength={5} onChange={(event) => setJoinCode(event.target.value.toUpperCase())} placeholder="ABCDE" aria-label="Código da sala" />
-                <button onClick={enterRoom} disabled={connection !== 'connected'}>ENTRAR <span>↗</span></button>
-              </div>
-              {/* Sala cheia ou prova em andamento não barram quem só quer ver. */}
-              <button type="button" className="text-button watch-button" onClick={spectateRoom} disabled={connection !== 'connected'}>
-                SÓ ASSISTIR, SEM OCUPAR VAGA <span>↗</span>
-              </button>
-            </section>
-
-            <section className="mode-card training-mode">
-              <header className="mode-heading">
-                <span>02</span>
-                <div>
-                  <p>SEM SALA · SEM ESPERA</p>
-                  <h3>TREINO SOLO</h3>
-                </div>
-              </header>
-              <p className="mode-copy">Conheça a pista, ajuste o ritmo e prepare-se para disputar o grid.</p>
-              <fieldset className="difficulty-picker">
-                <legend>NÍVEL DO TREINO</legend>
-                {DIFFICULTIES.map((nivel) => (
-                  <button
-                    key={nivel}
-                    type="button"
-                    className={soloDifficulty === nivel ? 'on' : ''}
-                    aria-pressed={soloDifficulty === nivel}
-                    onClick={() => setSoloDifficulty(nivel)}
-                  >
-                    {DIFFICULTY_LABELS[nivel]}
-                  </button>
-                ))}
-              </fieldset>
-              <p className="difficulty-note">{DIFFICULTY_NOTES[soloDifficulty]}</p>
-              <button className="solo-button" onClick={startSoloRace}>INICIAR TREINO <span>↗</span></button>
-            </section>
-
-            {/* A ranqueada: a fila pública, com pontos de liga e escada. */}
-            <section className="mode-card ranked-mode">
-              <header className="mode-heading">
-                <span>03</span>
-                <div>
-                  <p>FILA PÚBLICA · PONTOS DE LIGA · TEMPORADA {situacaoRanqueada?.painel.temporada ?? '—'}</p>
-                  <h3>RANQUEADA</h3>
-                </div>
-              </header>
-              <p className="mode-copy">
-                Até seis pilotos de nível parecido, largada automática, sem itens e sem sorte: sobe quem chega na frente.
-              </p>
-              <p className="daily-record">
-                {situacaoRanqueada
-                  ? situacaoRanqueada.painel.colocacao > 0
-                    ? <>EM COLOCAÇÃO <b>{situacaoRanqueada.painel.colocacaoTotal - situacaoRanqueada.painel.colocacao}/{situacaoRanqueada.painel.colocacaoTotal}</b></>
-                    : <>SEU TIER <b>{situacaoRanqueada.painel.divisao}</b></>
-                  : perfil || entrandoNaConta
-                    ? 'CONECTE-SE PARA VER O SEU TIER'
-                    : 'A RANQUEADA É DE QUEM TEM CONTA: NOME ÚNICO, PL E TIER EM QUALQUER APARELHO'}
-              </p>
-              {perfil || entrandoNaConta ? (
-                <button className="solo-button" onClick={abrirRanqueada} disabled={connection !== 'connected'}>
-                  ABRIR A RANQUEADA <span>↗</span>
-                </button>
-              ) : (
-                <button className="solo-button" onClick={() => abrirEntrada('entrar', 'menu')}>
-                  ENTRAR OU CRIAR CONTA <span>↗</span>
-                </button>
-              )}
-            </section>
-
-            {/* A mesma pista para todo mundo, o dia inteiro: é onde os tempos se
-                comparam. As medalhas saem do piloto de teste que usa tudo. */}
-            {/* Desafios da Semana: cinco pistas com a regra mexida, e um quadro
-                que zera toda segunda — o Playground do Horizon Chase Turbo. */}
-            <section className="mode-card weekly-mode">
-              <header className="mode-heading">
-                <span>05</span>
-                <div>
-                  <p>CINCO PISTAS · REGRAS MEXIDAS · ZERA NA SEGUNDA</p>
-                  <h3>DESAFIOS DA SEMANA</h3>
-                </div>
-              </header>
-              <ol className="weekly-list" aria-label="Desafios da semana">
-                {desafios.map((desafio) => {
-                  const definicao = MODIFICADORES[desafio.modificador]
-                  const doServidor = desafiosDoServidor?.find((resumo) => resumo.id === desafio.id)
-                  const meu = lerRecorde(armazenamentoLocal(), desafio.seed, desafio.dificuldade)
-                  return (
-                    <li key={desafio.id}>
-                      <div>
-                        <strong>{definicao.nome}</strong>
-                        <small>{definicao.descricao}</small>
-                      </div>
-                      <span className="weekly-times">
-                        <em>{meu ? `VOCÊ ${formatTime(meu.tempo)}` : 'SEM TEMPO'}</em>
-                        {doServidor?.lider && <em>LÍDER {doServidor.lider.apelido} {formatTime(doServidor.lider.tempo)}</em>}
-                      </span>
-                      <button type="button" onClick={() => void startTimeTrial(null, desafio)} aria-label={`Correr o desafio ${definicao.nome}`}>
-                        ▶
-                      </button>
-                    </li>
-                  )
-                })}
-              </ol>
-            </section>
-
-            <section className="mode-card daily-mode">
-              <header className="mode-heading">
-                <span>04</span>
-                <div>
-                  <p>A MESMA PISTA PARA TODOS · {pistaDoDia.dia.slice(8, 10)}/{pistaDoDia.dia.slice(5, 7)}</p>
-                  <h3>PISTA DO DIA</h3>
-                </div>
-              </header>
-              <p className="mode-copy">
-                Contrarrelógio no nível {DIFFICULTY_LABELS[DIFICULDADE_OFICIAL].toLowerCase()}: corra contra o fantasma do seu
-                recorde, bata as medalhas e recomece na hora com ⌫.
-              </p>
-              <ol className="medal-ladder" aria-label="Medalhas da Pista do Dia">
-                {MEDALHAS.map((medalha) => (
-                  <li
-                    key={medalha}
-                    className={`${medalha} ${recordeDoDia && recordeDoDia.tempo <= pistaDoDia.limites[medalha] ? 'on' : ''}`}
-                  >
-                    <span>{NOME_DA_MEDALHA[medalha]}</span>
-                    <b>{formatTime(pistaDoDia.limites[medalha])}</b>
-                  </li>
-                ))}
-              </ol>
-              <p className="daily-record">
-                SEU RECORDE <b>{recordeDoDia ? formatTime(recordeDoDia.tempo) : 'NENHUM AINDA'}</b>
-                {quadroDoDia?.voce && <> · QUADRO <b>#{quadroDoDia.voce.posicao}</b></>}
-              </p>
-              {/* O quadro de hoje. O ▶ baixa o fantasma daquele piloto e corre
-                  contra ele — o jeito do Trackmania de aprender a linha de quem
-                  é mais rápido. */}
-              {quadroDoDia && quadroDoDia.linhas.length > 0 && (
-                <ol className="daily-board" aria-label="Quadro da Pista do Dia">
-                  {quadroDoDia.linhas.slice(0, 5).map((linha) => (
-                    <li key={linha.id} className={linha.perfilId === perfil?.id ? 'me' : ''}>
-                      <b>{linha.posicao}</b>
-                      <span>{linha.apelido}</span>
-                      {linha.dispositivo === 'toque' && <em title="Feito no toque">TOQUE</em>}
-                      <i>{formatTime(linha.tempo)}</i>
-                      <button type="button" onClick={() => void correrContra(linha)} aria-label={`Correr contra o fantasma de ${linha.apelido}`}>▶</button>
-                    </li>
-                  ))}
-                </ol>
-              )}
-              {!perfil && !entrandoNaConta && (
-                <p className="daily-note">COMO CONVIDADO, O RECORDE FICA NO APARELHO. COM CONTA, ELE ENTRA NO QUADRO.</p>
-              )}
-              <button className="solo-button" onClick={() => void startTimeTrial()}>CORRER A PISTA DO DIA <span>↗</span></button>
-            </section>
-
-            {/* O ranking mundial: o melhor tempo de cada piloto numa pista que não
-                muda nunca — tempo só se compara na mesma pista. */}
-            <section className="mode-card world-mode">
-              <header className="mode-heading">
-                <span>07</span>
-                <div>
-                  <p>{CIRCUITO_OFICIAL.nome.toUpperCase()} · A MESMA PISTA PARA SEMPRE · TODOS OS TEMPOS</p>
-                  <h3>RANKING MUNDIAL</h3>
-                </div>
-              </header>
-              <p className="mode-copy">
-                O melhor tempo de cada piloto no Circuito Oficial, no nível {DIFFICULTY_LABELS[DIFICULDADE_OFICIAL].toLowerCase()}. Corra
-                contra o fantasma do recordista e suba no ranking.
-              </p>
-              {rankingMundial && rankingMundial.linhas.length > 0 ? (
-                <ol className="daily-board world-board" aria-label="Topo do ranking mundial">
-                  {rankingMundial.linhas.slice(0, 3).map((linha) => (
-                    <li key={linha.id} className={linha.perfilId === perfil?.id ? 'me' : ''}>
-                      <b>{linha.posicao}</b>
-                      <span>{linha.apelido}</span>
-                      {linha.dispositivo === 'toque' ? <em title="Feito no toque">TOQUE</em> : <em />}
-                      <i>{formatTime(linha.tempo)}</i>
-                      <button type="button" onClick={() => void correrContra(linha, 'mundial')} aria-label={`Correr contra o fantasma de ${linha.apelido}`}>▶</button>
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <p className="daily-record">{rankingMundial ? 'NINGUÉM MARCOU TEMPO AINDA: O PRIMEIRO RECORDE PODE SER SEU' : 'CONECTE-SE PARA VER O RANKING'}</p>
-              )}
-              <p className="daily-record">
-                SEU RECORDE <b>{recordeDoCircuito ? formatTime(recordeDoCircuito.tempo) : 'NENHUM AINDA'}</b>
-                {rankingMundial?.voce && <> · NO MUNDO <b>#{rankingMundial.voce.posicao}</b></>}
-              </p>
-              <div className="world-actions">
-                <button className="solo-button" onClick={() => void startTimeTrial(null, null, true)}>
-                  CORRER O CIRCUITO OFICIAL <span>↗</span>
-                </button>
-                <button className="solo-button" onClick={() => abrirRanking('mundial', 'menu')} disabled={connection !== 'connected'}>
-                  VER O RANKING MUNDIAL <span>↗</span>
-                </button>
-              </div>
-            </section>
-
-            {/* A Copa do Dia: hora marcada, classificação no contrarrelógio e
-                eliminação em salas de seis — o Cup of the Day do Trackmania. */}
-            <section className="mode-card cup-mode">
-              <header className="mode-heading">
-                <span>06</span>
-                <div>
-                  <p>
-                    TODO DIA ÀS {copa ? horaDe(copa.abertura) : '21:00'} · {copa ? Math.round((copa.fechamento - copa.abertura) / 60_000) : 10} MIN DE
-                    CLASSIFICAÇÃO · UM SAI POR CORRIDA
-                  </p>
-                  <h3>COPA DO DIA</h3>
-                </div>
-              </header>
-              <p className="mode-copy">
-                Classifique-se na Pista do Dia e dispute sua divisão de até seis pilotos: a cada corrida, o último sai. Vale troféu, não PL.
-              </p>
-              <p className="daily-record">{copaVista ? textoDaCopa(copaVista, serverClock.now()) : 'CONECTE-SE PARA VER A COPA'}</p>
-              {copaVista && copaVista.classificacao.length > 0 && (copaVista.fase === 'classificacao' || copaVista.fase === 'apuracao') && (
-                <ol className="daily-board cup-board" aria-label="Classificação da copa">
-                  {copaVista.classificacao.slice(0, 6).map((linha) => (
-                    <li key={linha.posicao} className={linha.voce ? 'me' : ''}>
-                      <b>{linha.posicao}</b>
-                      <span>{linha.apelido}</span>
-                      <i>{formatTime(linha.tempo)}</i>
-                    </li>
-                  ))}
-                </ol>
-              )}
-              {copa && copa.podios.length > 0 && (
-                <ol className="cup-podiums" aria-label="Pódios de hoje">
-                  {copa.podios.slice(0, 4).map((podio) => (
-                    <li key={podio.divisao}>
-                      <b>DIV. {podio.divisao}</b>
-                      {podio.pilotos.map((piloto) => (
-                        <span key={piloto.posicao} className={`taca-${piloto.posicao}`}>{piloto.posicao}º {piloto.apelido}</span>
-                      ))}
-                    </li>
-                  ))}
-                </ol>
-              )}
-              {copa && copa.trofeus.length > 0 && (
-                <p className="cup-trophies" aria-label="Seus troféus">
-                  SEUS TROFÉUS
-                  {[1, 2, 3].map((posicao) => {
-                    const quantos = copa.trofeus.filter((trofeu) => trofeu.posicao === posicao).length
-                    return quantos > 0 ? <b key={posicao} className={`taca-${posicao}`}>{posicao}º ×{quantos}</b> : null
-                  })}
-                </p>
-              )}
-              {avisoDaCopa && <p className="form-error">{avisoDaCopa}</p>}
-              {copaVista && (copaVista.fase === 'inscricoes' || copaVista.fase === 'classificacao') && !copaVista.inscrito && (
-                perfil || entrandoNaConta ? (
-                  <button className="solo-button" onClick={() => void inscreverSeNaCopa()} disabled={connection !== 'connected' || !perfil}>
-                    INSCREVER-SE NA COPA <span>↗</span>
-                  </button>
-                ) : (
-                  <button className="solo-button" onClick={() => abrirEntrada('entrar', 'menu')}>
-                    ENTRAR PARA SE INSCREVER <span>↗</span>
-                  </button>
-                )
-              )}
-              {copaVista?.inscrito && copaVista.fase === 'classificacao' && (
-                <button className="solo-button" onClick={() => void startTimeTrial()}>CORRER A CLASSIFICAÇÃO <span>↗</span></button>
-              )}
-              {copaVista?.inscrito && (copaVista.fase === 'inscricoes' || copaVista.fase === 'classificacao') && (
-                <button className="text-button" onClick={() => void deixarACopa()}>CANCELAR INSCRIÇÃO</button>
-              )}
-            </section>
-          </div>
-        </section>
-      </div>
-
-      <footer className="menu-footer">
-        <span>LARGADA SINCRONIZADA · FANTASMAS EM TEMPO REAL</span>
-        <span className="developer-credit">Desenvolvido por: <strong>Richarlison Ávila e Rafael Severo</strong></span>
-      </footer>
-    </main>
+    <Paddock
+      conectado={connection === 'connected'}
+      movimento={movimento}
+      latencia={movimento?.latencia ?? (clock.synced ? Math.round(clock.roundTrip) : null)}
+      erro={lobbyError}
+      onFecharErro={() => setLobbyError('')}
+      conta={{
+        perfil,
+        entrando: entrandoNaConta,
+        semServidor: contaSemServidor && sessao !== null,
+        onEntrar: () => abrirEntrada('entrar', 'menu'),
+        onReligar: religarAConta,
+        onPerfil: () => abrirPerfil(null, 'menu'),
+      }}
+      onRanking={() => abrirRanking('mundial', 'menu')}
+      onGaragem={() => openGarage('menu')}
+      car={car}
+      modo={modoDoMenu}
+      onModo={escolherModo}
+      detalheAberto={detalheAberto}
+      onFecharDetalhe={() => setDetalheAberto(false)}
+      ranqueada={{
+        situacao: situacaoRanqueada,
+        naFila,
+        busca: { tamanho: tamanhoDaFila, desde: naFilaDesde, ...previsaoDaFila },
+        aviso: avisoRanqueado,
+        onBuscar: () => void entrarNaFilaRanqueada(),
+        onCancelar: () => void sairDaFilaRanqueada(),
+        onEscada: () => abrirRanking('ranqueada', 'menu'),
+      }}
+      sala={{
+        rascunho: draftName,
+        nomeAtual: pilotName,
+        onNome: setDraftName,
+        codigo: joinCode,
+        convidado: convite,
+        onCodigo: (codigo) => {
+          setJoinCode(codigo)
+          setConvite(false)
+        },
+        onCriar: createRoom,
+        onEntrar: enterRoom,
+        onAssistir: spectateRoom,
+      }}
+      treino={{ dificuldade: soloDifficulty, onDificuldade: setSoloDifficulty, onIniciar: startSoloRace }}
+      pistaDoDia={{
+        dia: pistaDoDia.dia,
+        limites: pistaDoDia.limites,
+        recorde: recordeDoDia,
+        quadro: quadroDoDia,
+        onCorrer: () => void startTimeTrial(),
+        onCorrerContra: (linha) => void correrContra(linha),
+      }}
+      desafios={{
+        lista: desafios,
+        doServidor: desafiosDoServidor,
+        recordes: recordesDosDesafios,
+        onCorrer: (desafio) => void startTimeTrial(null, desafio),
+      }}
+      circuito={{
+        quadro: rankingMundial,
+        recorde: recordeDoCircuito,
+        onCorrer: () => void startTimeTrial(null, null, true),
+        onCorrerContra: (linha) => void correrContra(linha, 'mundial'),
+        onRanking: () => abrirRanking('mundial', 'menu'),
+      }}
+      copa={{
+        situacao: copa,
+        aviso: avisoDaCopa,
+        onInscrever: () => void inscreverSeNaCopa(),
+        onSair: () => void deixarACopa(),
+        onCorrer: () => void startTimeTrial(),
+      }}
+    />
   )
-}
-
-/** Minutos e segundos até um instante, para os relógios da copa. */
-function faltam(ms: number) {
-  const total = Math.max(0, Math.ceil(ms / 1000))
-  const horas = Math.floor(total / 3600)
-  const minutos = Math.floor((total % 3600) / 60)
-  const segundos = String(total % 60).padStart(2, '0')
-  return horas > 0 ? `${horas}H${String(minutos).padStart(2, '0')}` : `${minutos}:${segundos}`
-}
-
-/** A fase da copa agora, pelo relógio do servidor: as viradas marcadas não esperam a releitura. */
-function faseNoRelogio(copa: SituacaoDaCopa, agora: number): SituacaoDaCopa['fase'] {
-  if (copa.fase === 'inscricoes' && agora >= copa.abertura) return agora >= copa.fechamento ? 'apuracao' : 'classificacao'
-  if (copa.fase === 'classificacao' && agora >= copa.fechamento) return 'apuracao'
-  return copa.fase
-}
-
-/** A hora de um instante no relógio do aparelho. */
-function horaDe(instante: number) {
-  return new Date(instante).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-}
-
-/** Uma linha que diz onde a copa de hoje está, e onde o piloto está nela. */
-function textoDaCopa(copa: SituacaoDaCopa, agora: number) {
-  const hora = horaDe(copa.abertura)
-  const meuTempo = copa.voce?.tempo != null ? ` · SEU TEMPO ${formatTime(copa.voce.tempo)} (#${copa.voce.posicao})` : ''
-  switch (copa.fase) {
-    case 'inscricoes':
-      return `ABRE ÀS ${hora} · FALTAM ${faltam(copa.abertura - agora)} · ${copa.inscritos} ${copa.inscritos === 1 ? 'INSCRITO' : 'INSCRITOS'}${copa.inscrito ? ' · VOCÊ ESTÁ DENTRO' : ''}`
-    case 'classificacao':
-      return `CLASSIFICAÇÃO ABERTA · FECHA EM ${faltam(copa.fechamento - agora)}${meuTempo}`
-    case 'apuracao':
-      return `CLASSIFICAÇÃO FECHADA · AS DIVISÕES LARGAM EM ${faltam(copa.eliminatorias - agora)}${meuTempo}`
-    case 'eliminatorias':
-      return copa.minhaDivisao
-        ? copa.minhaDivisao.posicao
-          ? `VOCÊ FICOU EM ${copa.minhaDivisao.posicao}º NA DIVISÃO ${copa.minhaDivisao.numero} · ELIMINATÓRIAS EM ANDAMENTO`
-          : `DIVISÃO ${copa.minhaDivisao.numero} · RODADA ${copa.minhaDivisao.rodada} · ${copa.minhaDivisao.restantes} NA DISPUTA`
-        : 'ELIMINATÓRIAS EM ANDAMENTO'
-    case 'encerrada':
-      return copa.motivo
-        ? `${copa.motivo.toUpperCase()} VOLTE AMANHÃ ÀS ${hora}`
-        : copa.minhaDivisao?.posicao
-          ? `VOCÊ FICOU EM ${copa.minhaDivisao.posicao}º NA DIVISÃO ${copa.minhaDivisao.numero} · VOLTE AMANHÃ ÀS ${hora}`
-          : `A COPA DE HOJE TERMINOU · VOLTE AMANHÃ ÀS ${hora}`
-  }
 }
 
 export default App

@@ -65,6 +65,8 @@ export type PublicRoom = {
   ranqueada: boolean
   /** Sala de uma rodada da Copa do Dia: largada automática, como a ranqueada, mas sem PL. */
   copa?: RodadaDaCopa
+  /** O câmbio da sala: livre, cada piloto escolhe; manual, obrigatório para todos — o da ranqueada. */
+  cambio: RegraDoCambio
   /**
    * Quem assiste da arquibancada.
    *
@@ -82,6 +84,14 @@ export type PublicSpectator = {
 
 /** A divisão e a rodada da Copa do Dia que uma sala corre. */
 export type RodadaDaCopa = { divisao: number; rodada: number }
+
+/**
+ * A regra do câmbio numa sala. Na livre, cada piloto escolhe o seu — manual ou
+ * automático —, como nas salas com amigos e na Copa. Na manual, todos trocam
+ * as marchas: é a da ranqueada, onde a troca perfeita, que rende turbo, fica
+ * ao alcance de todos por igual.
+ */
+export type RegraDoCambio = 'livre' | 'manual'
 
 export type RivalState = 'racing' | 'finished'
 
@@ -152,6 +162,8 @@ type Room = {
   ranqueada: boolean
   /** Sala de uma rodada da Copa do Dia. */
   copa: RodadaDaCopa | null
+  /** Livre, cada piloto escolhe o câmbio; manual, todos trocam as marchas. */
+  cambio: RegraDoCambio
   /** De onde saem as sementes desta sala. A ranqueada usa o pool da semana. */
   sorteioDeSemente: (() => number) | null
   /** A arquibancada: não ocupa vaga e não mexe na prova. */
@@ -337,6 +349,7 @@ export class RoomStore {
       exigeTelemetria: false,
       ranqueada: false,
       copa: null,
+      cambio: 'livre',
       sorteioDeSemente: null,
       players: [{ ...this.createPlayer(playerId, socketId, rawName, car), perfilId }],
       spectators: [],
@@ -563,6 +576,8 @@ export class RoomStore {
       exigeTelemetria: true,
       ranqueada: copa === null,
       copa,
+      // A ranqueada é manual para todos; a copa, como as salas com amigos, é livre.
+      cambio: copa === null ? 'manual' : 'livre',
       sorteioDeSemente,
       spectators: [],
       players: [
@@ -935,6 +950,22 @@ export class RoomStore {
     return this.rooms.size
   }
 
+  /**
+   * O movimento das salas, para o menu: quantos pilotos estão numa largada ou
+   * correndo agora, e quantos assistem. Fantasmas não contam — são voltas
+   * gravadas, não gente —, nem quem caiu e ainda não voltou.
+   */
+  movimento() {
+    let correndo = 0
+    let assistindo = 0
+    for (const room of this.rooms.values()) {
+      assistindo += room.spectators.length
+      if (room.state !== 'countdown' && room.state !== 'racing') continue
+      correndo += room.players.filter((player) => !player.fantasma && player.disconnectedAt === null).length
+    }
+    return { correndo, assistindo }
+  }
+
   private afterDeparture(code: string, room: Room): RoomUpdate {
     const cancelledCountdown = room.state === 'countdown'
     // Uma sala só de fantasmas não tem mais ninguém para correr — a não ser que
@@ -1045,6 +1076,7 @@ export class RoomStore {
       exigeTelemetria: false,
       ranqueada: false,
       copa: null,
+      cambio: 'livre',
       sorteioDeSemente: null,
       players: [],
       spectators: [],
@@ -1126,6 +1158,7 @@ export class RoomStore {
       hostId: room.hostId,
       ranqueada: room.ranqueada,
       ...(room.copa ? { copa: { ...room.copa } } : {}),
+      cambio: room.cambio,
       spectators: room.spectators.map(({ id, name }) => ({ id, name })),
     }
   }

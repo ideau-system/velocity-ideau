@@ -78,6 +78,28 @@ describe('ranqueada pelo socket', () => {
     expect((await ask(client, 'ranqueada:painel')).ok).toBe(false)
   })
 
+  it('quem espera na fila sabe quando ela anda: sozinho, a hora dos fantasmas; com companhia, a da sala', async () => {
+    type Fila = { tamanho: number; desde: number; salaEm: number | null; fantasmasEm: number | null }
+    const ana = await piloto('Ana')
+    const sozinha = waitFor<Fila>(ana.client, 'ranqueada:fila')
+    expect((await ask(ana.client, 'ranqueada:entrar', { playerId: ana.playerId, carro: 'senna' })).ok).toBe(true)
+    const primeira = await sozinha
+    expect(primeira).toMatchObject({ tamanho: 1, salaEm: null, fantasmasEm: primeira.desde + 200 })
+
+    const comCompanhia = new Promise<Fila>((resolve) => {
+      const ouvir = (fila: Fila) => {
+        if (fila.tamanho !== 2) return
+        ana.client.off('ranqueada:fila', ouvir)
+        resolve(fila)
+      }
+      ana.client.on('ranqueada:fila', ouvir)
+    })
+    const beto = await piloto('Beto')
+    expect((await ask(beto.client, 'ranqueada:entrar', { playerId: beto.playerId, carro: 'senna' })).ok).toBe(true)
+    // A sala fecha quando a primeira da fila completa a espera.
+    expect(await comCompanhia).toMatchObject({ desde: primeira.desde, salaEm: primeira.desde + 100, fantasmasEm: null })
+  })
+
   it('o painel de quem nunca correu mostra a colocação pela frente', async () => {
     const { client } = await piloto('Ana')
     const painel = await ask(client, 'ranqueada:painel')
@@ -101,6 +123,9 @@ describe('ranqueada pelo socket', () => {
     const [{ room }] = await Promise.all(partidas)
     expect(room.ranqueada).toBe(true)
     expect(room.difficulty).toBe(DIFICULDADE_OFICIAL)
+    // Na ranqueada o câmbio é manual para todos, no nível profissional.
+    expect(room.cambio).toBe('manual')
+    expect(DIFICULDADE_OFICIAL).toBe('profissional')
     expect(room.trackSeed).toBe(42)
     expect(room.players.every((player) => player.ready)).toBe(true)
 

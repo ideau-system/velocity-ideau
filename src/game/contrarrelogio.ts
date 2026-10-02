@@ -21,14 +21,17 @@ import type { Difficulty } from './rules.js'
 export const FUSO_DA_PISTA_DO_DIA = 'America/Sao_Paulo'
 
 /**
- * Nível oficial da Pista do Dia e da ranqueada.
+ * Nível oficial do que é competição: a ranqueada, a Copa do Dia e os recordes
+ * — a Pista do Dia e o Circuito Oficial do ranking mundial.
  *
  * Um nível só, para os tempos serem comparáveis e a população pequena não se
  * dividir em três quadros: o Hyper Roll do TFT morreu com 2% do tempo de jogo.
- * O difícil é o do meio — o normal é a porta de entrada, o profissional o
- * desafio.
+ * É o profissional, o mais exigente: onde há ponto, troféu ou recorde em jogo,
+ * erro custa caro. O normal e o difícil ficam para o treino e as salas com
+ * amigos. Os recordes são guardados por semente e nível, então os de outro
+ * nível continuam no banco, só não entram mais nos quadros.
  */
-export const DIFICULDADE_OFICIAL: Difficulty = 'dificil'
+export const DIFICULDADE_OFICIAL: Difficulty = 'profissional'
 
 /**
  * O Circuito Oficial: a pista fixa do ranking mundial de melhor tempo.
@@ -36,9 +39,9 @@ export const DIFICULDADE_OFICIAL: Difficulty = 'dificil'
  * Cada corrida sorteia um traçado, a Pista do Dia troca à meia-noite e os
  * desafios na segunda: um recorde mundial precisa de uma pista que não mude
  * nunca, como as da campanha do Trackmania. A semente foi escolhida entre as
- * que o pool da ranqueada aprovaria — o iniciante termina em 77 s, e o piloto
- * que usa tudo tira 15 s disso —, num fim de tarde no campo, com arquibancada.
- * Trocar a semente zera o ranking.
+ * que o pool da ranqueada aprovaria — no nível oficial, o iniciante termina em
+ * 82 s, e o piloto que usa tudo tira 21 s disso —, num fim de tarde no campo,
+ * com arquibancada. Trocar a semente, ou o nível, zera o ranking.
  */
 export const CIRCUITO_OFICIAL = {
   seed: 3_729_030_975,
@@ -53,6 +56,23 @@ export const CONTAGEM_DO_CONTRARRELOGIO_MS = 2_400
 export function diaDe(data: Date, fuso = FUSO_DA_PISTA_DO_DIA) {
   // O formato canadense é o ISO, e é o único que o Intl entrega sem montar à mão.
   return new Intl.DateTimeFormat('en-CA', { timeZone: fuso, year: 'numeric', month: '2-digit', day: '2-digit' }).format(data)
+}
+
+/**
+ * O instante em que a Pista do Dia troca: a próxima meia-noite no fuso dela.
+ * Brasília não tem mais horário de verão, então todo dia tem 24 horas.
+ */
+export function viradaDoDia(instante: number, fuso = FUSO_DA_PISTA_DO_DIA) {
+  const partes = new Intl.DateTimeFormat('en-GB', {
+    timeZone: fuso,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(instante)
+  const parte = (tipo: Intl.DateTimeFormatPartTypes) => Number(partes.find((item) => item.type === tipo)?.value ?? 0)
+  const passouDoDia = ((parte('hour') * 60 + parte('minute')) * 60 + parte('second')) * 1000 + (instante % 1000)
+  return instante - passouDoDia + 86_400_000
 }
 
 /** Semente da pista de um dia. Mesma data, mesma pista, em qualquer aparelho. */

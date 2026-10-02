@@ -1260,3 +1260,45 @@ describe('easter egg do Hamilton na Mercedes no servidor', () => {
     expect(naCasual(rapido)!.progress).toBeCloseTo(rapido)
   })
 })
+
+describe('movimento das salas', () => {
+  it('conta quem está na largada ou correndo, e quem assiste; fantasma e quem caiu ficam de fora', () => {
+    const clock = createClock()
+    const rooms = new RoomStore({ now: clock.now })
+    const code = roomWithTwoPilots(rooms)
+    // Esperando no lobby ninguém está correndo.
+    expect(rooms.movimento()).toEqual({ correndo: 0, assistindo: 0 })
+    rooms.spectate(code, 'socket-g', 'g', 'Gil')
+    rooms.setReady(code, 'a', true)
+    rooms.setReady(code, 'b', true)
+    rooms.scheduleStart(code)
+    expect(rooms.movimento()).toEqual({ correndo: 2, assistindo: 1 })
+    clock.advance(5_400)
+    rooms.beginRace(code)
+    rooms.markDisconnected('socket-b')
+    expect(rooms.movimento()).toEqual({ correndo: 1, assistindo: 1 })
+
+    const comFantasma = rooms.criarRanqueada(
+      [{ socketId: 'socket-c', playerId: 'c', nome: 'Caio', carro: 'senna' }],
+      'dificil',
+      () => 42,
+      [{ id: 'fantasma-1', nome: 'Duda', carro: 'senna' }],
+    )
+    rooms.scheduleStart(comFantasma.code)
+    expect(rooms.movimento().correndo).toBe(2)
+  })
+})
+
+describe('câmbio da sala', () => {
+  it('é livre nas salas com amigos, na de demonstração e na copa, e manual na ranqueada', () => {
+    const rooms = new RoomStore({ openRooms: ['DEMO1'] })
+    expect(rooms.create('socket-a', 'a', 'Ana').cambio).toBe('livre')
+    expect(rooms.join('DEMO1', 'socket-b', 'b', 'Beto').cambio).toBe('livre')
+    const pilotos = [
+      { socketId: 'socket-c', playerId: 'c', nome: 'Caio', carro: 'senna' },
+      { socketId: 'socket-d', playerId: 'd', nome: 'Duda', carro: 'senna' },
+    ]
+    expect(rooms.criarRanqueada(pilotos, 'profissional', () => 42).cambio).toBe('manual')
+    expect(rooms.criarDaCopa(pilotos, 'profissional', 42, { divisao: 1, rodada: 1 }).cambio).toBe('livre')
+  })
+})

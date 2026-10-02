@@ -37,106 +37,24 @@ button { cursor: pointer; }
   mask-image: linear-gradient(to bottom, transparent 0%, #000 52%, #000 100%);
 }
 
-.site-header {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  min-height: 82px;
-  padding: 14px clamp(24px, 5vw, 74px);
-  border-bottom: 1px solid rgba(255,255,255,.09);
-  background: rgba(5,9,14,.38);
-  backdrop-filter: blur(12px);
-}
-
 .logo { display: flex; align-items: center; gap: 13px; font-family: 'Barlow Condensed', sans-serif; font-size: 14px; line-height: .85; letter-spacing: .08em; }
 .logo b { color: var(--orange); font-size: 19px; }
 .logo i, .brand-mini i { width: 24px; height: 34px; display: block; background: linear-gradient(135deg, transparent 31%, var(--orange) 32% 49%, transparent 50%), linear-gradient(135deg, transparent 51%, #fff 52% 68%, transparent 69%); transform: skewX(-8deg); }
-.header-meta { display: flex; align-items: center; gap: 24px; }
-.institutional-mark { display: flex; align-items: center; gap: 11px; color: #7e8994; font: 700 9px/1.25 'Barlow Condensed', sans-serif; letter-spacing: .17em; }
-.institutional-mark img { width: 52px; height: 44px; padding: 3px; border-radius: 3px; background: #fff; object-fit: contain; box-shadow: 0 7px 22px rgba(0,0,0,.28); }
-.build-tag { color: #68727e; font: 600 11px 'Barlow Condensed', sans-serif; letter-spacing: .23em; }
 
 .eyebrow { margin: 0 0 14px; color: var(--orange); font: 700 12px 'Barlow Condensed', sans-serif; letter-spacing: .22em; }
 
-.menu-screen { min-height: 100dvh; overflow-y: auto; background: radial-gradient(circle at 30% 37%, rgba(255,75,43,.12), transparent 30%), linear-gradient(120deg, #0b1119 0%, #06090e 60%, #0b1016 100%); }
-.menu-screen::after { content: ''; position: absolute; z-index: 1; inset: 82px 0 auto; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,75,43,.55) 22%, transparent 43%); pointer-events: none; }
-.menu-content { position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, .92fr) minmax(480px, 1.08fr); gap: clamp(46px, 6vw, 96px); align-items: center; width: min(1440px, calc(100% - clamp(48px, 10vw, 148px))); min-height: calc(100dvh - 131px); margin: 0 auto; padding: clamp(38px, 6vh, 70px) 0 clamp(72px, 9vh, 108px); }
-
-.menu-hero { min-width: 0; }
-.hero-heading h1 { margin: 0; font: 900 italic clamp(70px, 7.2vw, 112px)/.8 'Barlow Condensed', sans-serif; letter-spacing: -.045em; text-transform: uppercase; }
-.hero-heading h1 em { color: transparent; -webkit-text-stroke: 1.5px var(--orange); text-shadow: 10px 10px 35px rgba(255,75,43,.15); }
-.hero-copy { max-width: 500px; margin: 25px 0 0; color: #929aa4; font-size: 14px; line-height: 1.75; }
-
-.hero-car { --accent: var(--orange); position: relative; display: grid; grid-template-columns: minmax(170px, 1fr) auto; align-items: end; width: 100%; min-height: 186px; margin: 28px 0 22px; padding: 20px 24px; overflow: hidden; border: 1px solid rgba(255,255,255,.1); border-left: 3px solid var(--accent); background: linear-gradient(110deg, color-mix(in srgb, var(--accent) 9%, rgba(10,15,22,.9)), rgba(8,12,18,.7)); color: #fff; text-align: left; box-shadow: 0 24px 60px rgba(0,0,0,.22); transition: border-color .18s, transform .18s, background .18s; }
-.hero-car:hover { border-color: color-mix(in srgb, var(--accent) 62%, #53606c); transform: translateY(-2px); }
-.hero-car img { position: absolute; z-index: 1; right: 16%; bottom: -14px; width: min(45%, 250px); height: 210px; object-fit: contain; filter: drop-shadow(0 22px 24px rgba(0,0,0,.6)); }
-.hero-car-number { position: absolute; top: -28px; right: 37%; color: transparent; -webkit-text-stroke: 1px color-mix(in srgb, var(--accent) 30%, transparent); font: 900 italic 150px/.9 'Barlow Condensed', sans-serif; opacity: .75; }
-.hero-car-caption { position: relative; z-index: 2; align-self: end; }
-.hero-car-caption small { display: block; margin-bottom: 5px; color: #75808b; font: 700 9px 'Barlow Condensed', sans-serif; letter-spacing: .19em; }
-.hero-car-caption strong { display: block; max-width: 190px; font: 800 24px/.95 'Barlow Condensed', sans-serif; letter-spacing: .02em; text-transform: uppercase; }
-.hero-car-caption em { display: block; margin-top: 7px; color: var(--accent); font: 700 10px 'Barlow Condensed', sans-serif; font-style: normal; letter-spacing: .14em; text-transform: uppercase; }
-.hero-car-action { position: relative; z-index: 2; align-self: start; color: #aab2ba; font: 800 10px 'Barlow Condensed', sans-serif; letter-spacing: .15em; }
-.hero-car-action b { margin-left: 6px; color: var(--accent); font-size: 14px; }
-
-.race-facts { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0; border-block: 1px solid rgba(255,255,255,.09); }
-.race-facts div { padding: 14px 12px 13px; }
-.race-facts div + div { border-left: 1px solid rgba(255,255,255,.09); }
-.race-facts dt { margin-bottom: 5px; color: #58636f; font: 700 8px 'Barlow Condensed', sans-serif; letter-spacing: .18em; }
-.race-facts dd { margin: 0; color: #d8dde1; font: 800 12px 'Barlow Condensed', sans-serif; letter-spacing: .1em; }
-
-.start-panel { position: relative; padding: clamp(25px, 3vw, 38px); border: 1px solid rgba(255,255,255,.12); border-top: 3px solid var(--orange); background: rgba(10,15,22,.89); box-shadow: 0 30px 80px rgba(0,0,0,.38); backdrop-filter: blur(16px); }
-.start-panel-header { display: grid; grid-template-columns: auto 1fr auto; gap: 15px; align-items: start; margin-bottom: 23px; }
-.panel-step { color: rgba(255,255,255,.12); font: 900 italic 48px/.8 'Barlow Condensed', sans-serif; }
-.start-panel-header .eyebrow { margin-bottom: 4px; font-size: 9px; }
-.start-panel-header h2 { margin: 0; font: 900 italic 34px/.95 'Barlow Condensed', sans-serif; letter-spacing: -.02em; }
-.server-status { display: flex; align-items: center; gap: 6px; color: #8b6e44; font: 700 8px 'Barlow Condensed', sans-serif; letter-spacing: .14em; white-space: nowrap; }
-.server-status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 9px currentColor; }
-.server-status.online { color: #45e7ad; }
-
 .identity-field label { display: block; margin-bottom: 8px; color: #7c8690; font: 700 10px 'Barlow Condensed', sans-serif; letter-spacing: .18em; }
-.identity-field input, .join-control input { width: 100%; min-width: 0; height: 48px; padding: 0 16px; border: 1px solid #303944; border-radius: 2px; outline: 0; background: rgba(5,9,14,.78); color: #fff; }
-.identity-field input:focus, .join-control input:focus { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(255,75,43,.1); }
-.identity-field input::placeholder, .join-control input::placeholder { color: #5f6974; }
+.identity-field input { width: 100%; min-width: 0; height: 48px; padding: 0 16px; border: 1px solid #303944; border-radius: 2px; outline: 0; background: rgba(5,9,14,.78); color: #fff; }
+.identity-field input:focus { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(255,75,43,.1); }
+.identity-field input::placeholder { color: #5f6974; }
 .identity-field input { font-size: 14px; }
 
-.mode-list { display: grid; grid-template-columns: 1.08fr .92fr; gap: 12px; margin-top: 15px; }
-.mode-card { min-width: 0; padding: 19px; border: 1px solid rgba(255,255,255,.1); background: rgba(7,11,17,.67); }
-.online-mode { border-color: rgba(255,75,43,.32); background: linear-gradient(145deg, rgba(255,75,43,.08), rgba(7,11,17,.72) 52%); }
-.mode-heading { display: flex; gap: 11px; align-items: center; }
-.mode-heading > span { display: grid; place-items: center; width: 29px; height: 29px; border: 1px solid #323b45; color: #6b7580; font: 800 10px 'Barlow Condensed', sans-serif; }
-.online-mode .mode-heading > span { border-color: rgba(255,75,43,.5); color: var(--orange); }
-.mode-heading p { margin: 0 0 2px; color: #66717d; font: 700 8px 'Barlow Condensed', sans-serif; letter-spacing: .16em; }
-.mode-heading h3 { margin: 0; font: 800 italic 22px/1 'Barlow Condensed', sans-serif; letter-spacing: .02em; }
-.mode-copy { min-height: 43px; margin: 13px 0 16px; color: #818b95; font-size: 11px; line-height: 1.55; }
-.create-room-button { width: 100%; padding-block: 13px; }
 .join-divider { display: flex; align-items: center; gap: 9px; margin: 13px 0 8px; color: #616b75; font: 700 8px 'Barlow Condensed', sans-serif; letter-spacing: .14em; }
 .join-divider::before, .join-divider::after { content: ''; height: 1px; flex: 1; background: rgba(255,255,255,.09); }
-.join-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
-.join-control input { height: 42px; border-radius: 2px 0 0 2px; font: 700 14px 'Barlow Condensed', sans-serif; letter-spacing: .2em; text-transform: uppercase; }
-.join-control button { border: 1px solid #3a444e; border-left: 0; background: #19212a; color: #fff; padding: 0 12px; font: 800 9px 'Barlow Condensed', sans-serif; letter-spacing: .12em; }
-.join-control button span { margin-left: 4px; color: var(--orange); }
-/* Assistir sem ocupar vaga: discreto, logo abaixo de entrar. */
-.watch-button { margin: 12px 0 0; padding: 0; color: #8b96a1; font-size: 9px; }
-.watch-button span { margin-left: 4px; color: #43e7ff; }
-.watch-button:disabled { opacity: .45; }
-.training-mode .difficulty-picker { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-top: 0; }
-.training-mode .difficulty-picker legend { grid-column: 1 / -1; }
-.training-mode .difficulty-picker button { min-width: 0; padding: 9px 3px; font-size: 8px; letter-spacing: .08em; }
-.training-mode .difficulty-note { min-height: 29px; margin-top: 8px; font-size: 9px; line-height: 1.45; }
 .solo-button { width: 100%; margin-top: 8px; padding: 12px 14px; border: 1px solid #3a444e; background: #151c24; color: #dce1e4; font: 800 10px 'Barlow Condensed', sans-serif; letter-spacing: .14em; transition: border-color .18s, color .18s, background .18s; }
 .solo-button:hover { border-color: #68737e; background: #1b242e; color: #fff; }
 .solo-button span { float: right; color: var(--orange); }
 
-/* Pista do Dia: a largura toda, abaixo dos dois modos. Âmbar, que é a cor das
-   medalhas e da tangência — o prêmio da pista. */
-.daily-mode { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 4px 18px; align-items: start; border-color: rgba(255,198,48,.28); background: linear-gradient(145deg, rgba(255,198,48,.07), rgba(7,11,17,.72) 55%); }
-.daily-mode .mode-heading > span { border-color: rgba(255,198,48,.5); color: #ffc630; }
-.daily-mode .mode-copy { grid-column: 1; min-height: 0; margin: 10px 0 0; }
-.daily-mode .medal-ladder { grid-column: 2; grid-row: 1 / span 2; }
-.daily-mode .daily-record { grid-column: 1; }
-.daily-mode .solo-button { grid-column: 2; }
 .medal-ladder { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; margin: 0; padding: 0; list-style: none; }
 .medal-ladder li { padding: 8px 6px; border: 1px solid #2a323c; background: rgba(7,11,17,.84); text-align: center; }
 .medal-ladder span { display: block; color: #7c8690; font: 700 8px 'Barlow Condensed', sans-serif; letter-spacing: .16em; text-transform: uppercase; }
@@ -147,36 +65,7 @@ button { cursor: pointer; }
 .medal-ladder .ouro { --medalha: #ffc630; }
 .medal-ladder .prata { --medalha: #cfd6dd; }
 .medal-ladder .bronze { --medalha: #d0874a; }
-.daily-record { margin: 8px 0 0; color: #7c8690; font: 700 9px 'Barlow Condensed', sans-serif; letter-spacing: .16em; }
-.daily-record b { margin-left: 6px; color: #fff; font-size: 13px; font-variant-numeric: tabular-nums; }
-.daily-mode .daily-board { grid-column: 1 / -1; }
-/* Desafios da Semana: a largura toda, em ciano — a cor do boost, que é o que
-   metade dos modificadores mexe. */
-.weekly-mode { grid-column: 1 / -1; border-color: rgba(67,231,255,.26); background: linear-gradient(145deg, rgba(67,231,255,.06), rgba(7,11,17,.72) 55%); }
-.weekly-mode .mode-heading > span { border-color: rgba(67,231,255,.5); color: #43e7ff; }
-.weekly-list { display: grid; gap: 4px; margin: 12px 0 0; padding: 0; list-style: none; }
-.weekly-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto 32px; align-items: center; gap: 10px; padding: 7px 9px; border: 1px solid rgba(255,255,255,.06); background: rgba(7,11,17,.6); }
-.weekly-list strong { display: block; font: 800 italic 14px 'Barlow Condensed', sans-serif; letter-spacing: .04em; }
-.weekly-list small { display: block; color: #7c8690; font: 600 10px/1.35 'Barlow Condensed', sans-serif; }
-.weekly-times { display: grid; justify-items: end; gap: 2px; }
-.weekly-times em { color: #cfd6dd; font: 700 10px 'Barlow Condensed', sans-serif; font-style: normal; letter-spacing: .08em; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.weekly-times em + em { color: #43e7ff; }
-.weekly-list button { height: 30px; border: 1px solid #3a444e; background: #151c24; color: #43e7ff; font-size: 11px; }
-.weekly-list button:hover { border-color: #43e7ff; }
-/* Copa do Dia: a largura toda, em vermelho de largada — é o evento com hora
-   marcada. Os troféus usam as mesmas cores das medalhas. */
-.cup-mode { grid-column: 1 / -1; border-color: rgba(255,75,43,.3); background: linear-gradient(145deg, rgba(255,75,43,.08), rgba(7,11,17,.72) 55%); }
-.cup-mode .mode-heading > span { border-color: rgba(255,75,43,.55); color: var(--orange); }
-.cup-mode .mode-copy { min-height: 0; margin: 10px 0 0; }
-.cup-mode .solo-button:disabled { opacity: .45; cursor: not-allowed; }
-.cup-mode .text-button { margin-top: 10px; }
-.cup-board li { grid-template-columns: 22px minmax(0, 1fr) auto; }
-.cup-board li.me { border-color: rgba(255,75,43,.5); background: rgba(255,75,43,.08); }
-.cup-podiums { display: grid; gap: 3px; margin: 10px 0 0; padding: 0; list-style: none; }
-.cup-podiums li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 6px 9px; border: 1px solid rgba(255,255,255,.06); background: rgba(7,11,17,.6); font: 600 12px 'Barlow Condensed', sans-serif; }
-.cup-podiums b { color: #7c8690; font: 800 9px 'Barlow Condensed', sans-serif; letter-spacing: .14em; }
-.cup-trophies { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 10px 0 0; color: #7c8690; font: 700 9px 'Barlow Condensed', sans-serif; letter-spacing: .16em; }
-.cup-trophies b { font: 800 13px 'Barlow Condensed', sans-serif; font-variant-numeric: tabular-nums; }
+/* Troféus da Copa do Dia: as mesmas cores das medalhas. */
 .taca-1 { color: #ffc630; }
 .taca-2 { color: #cfd6dd; }
 .taca-3 { color: #d0874a; }
@@ -204,14 +93,10 @@ button { cursor: pointer; }
 .medal-name.bronze { color: #d0874a; }
 .form-error { margin: 10px 0 0; color: #ff826c; font: 600 12px 'Barlow Condensed', sans-serif; letter-spacing: .06em; }
 .form-notice { margin: 10px 0 0; color: #7f8a95; font: 700 11px 'Barlow Condensed', sans-serif; letter-spacing: .14em; }
-.primary-button:disabled, .join-control button:disabled { cursor: not-allowed; filter: grayscale(1); opacity: .38; transform: none; box-shadow: none; }
+.primary-button:disabled { cursor: not-allowed; filter: grayscale(1); opacity: .38; transform: none; box-shadow: none; }
 .primary-button { border: 0; border-radius: 2px; background: var(--orange); color: #fff; padding: 17px 23px; font: 800 13px 'Barlow Condensed', sans-serif; letter-spacing: .13em; box-shadow: 0 10px 32px rgba(255,75,43,.24); transition: transform .18s, background .18s; }
 .primary-button:hover { background: #ff6448; transform: translateY(-2px); }
 .primary-button span { margin-left: 18px; font-size: 17px; }
-
-.menu-footer { position: absolute; z-index: 2; bottom: 0; left: 0; right: 0; display: flex; justify-content: space-between; padding: 17px clamp(24px, 5vw, 74px); border-top: 1px solid rgba(255,255,255,.08); background: rgba(5,8,12,.48); color: #525d69; font: 600 10px 'Barlow Condensed', sans-serif; letter-spacing: .15em; }
-.developer-credit { color: #747f8a; text-transform: none; }
-.developer-credit strong { color: #c8cdd1; font-weight: 700; }
 
 .race-shell { position: relative; width: 100vw; height: 100dvh; overflow: hidden; background: #07101a; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .race-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -317,31 +202,13 @@ button { cursor: pointer; }
 .platina { --tier: var(--tier-platina); }
 .diamante { --tier: var(--tier-diamante); }
 .mestre { --tier: var(--tier-mestre); }
-.ranked-screen { display: grid; place-items: center; padding: 24px; }
-.ranked-card { position: relative; z-index: 2; display: grid; gap: 14px; width: min(680px, 100%); padding: clamp(24px, 5vw, 48px); border: 1px solid rgba(255,255,255,.12); background: rgba(12,17,24,.88); box-shadow: 0 30px 100px rgba(0,0,0,.45); }
-.ranked-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-.ranked-header h1 { margin: 0; font: 900 italic clamp(44px, 8vw, 70px)/.9 'Barlow Condensed', sans-serif; }
-.ranked-pilot { margin: 6px 0 0; color: var(--orange); font: 800 14px 'Barlow Condensed', sans-serif; letter-spacing: .14em; text-transform: uppercase; }
 .tier-badge { display: grid; justify-items: center; min-width: 124px; padding: 12px 16px; border: 2px solid var(--tier, #5d666f); background: rgba(7,11,17,.8); box-shadow: 0 0 24px color-mix(in srgb, var(--tier, #5d666f) 35%, transparent); transform: skewX(-8deg); text-align: center; }
 .tier-badge span { color: var(--tier, #8d959d); font: 800 10px 'Barlow Condensed', sans-serif; letter-spacing: .2em; text-transform: uppercase; }
 .tier-badge strong { font: 900 italic 26px/1 'Barlow Condensed', sans-serif; }
 .tier-badge.colocacao { --tier: #8d959d; }
-.pl-meter .boost-track i { background: var(--tier, var(--orange)); box-shadow: 0 0 14px var(--tier, var(--orange)); }
 .ranked-note { margin: 0; color: #818b95; font: 600 12px/1.5 'Barlow Condensed', sans-serif; letter-spacing: .04em; }
 .ranked-note.subindo { color: #45e7ad; font-weight: 800; letter-spacing: .1em; }
-.ranked-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; border-block: 1px solid rgba(255,255,255,.1); }
-.ranked-stats div { padding: 12px 8px; text-align: center; }
-.ranked-stats div + div { border-left: 1px solid rgba(255,255,255,.1); }
-.ranked-stats dt { color: #747e88; font: 700 9px 'Barlow Condensed', sans-serif; letter-spacing: .15em; }
-.ranked-stats dd { margin: 4px 0 0; font: 800 18px 'Barlow Condensed', sans-serif; }
-.ranked-queue { display: grid; gap: 10px; justify-items: stretch; }
-.ranked-queue .primary-button { width: 100%; }
-.ranked-queue .text-button { margin: 0 auto; }
-.ranked-searching { display: grid; gap: 4px; margin: 0; padding: 14px; border: 1px solid rgba(255,75,43,.4); background: rgba(255,75,43,.08); font: 800 14px 'Barlow Condensed', sans-serif; letter-spacing: .12em; }
-.ranked-searching i { display: inline-block; width: 9px; height: 9px; margin-right: 8px; border-radius: 50%; background: var(--orange); animation: fila-pulsa 1s ease-in-out infinite alternate; }
-.ranked-searching small { color: #9fa9b2; font: 700 10px 'Barlow Condensed', sans-serif; letter-spacing: .12em; }
-@keyframes fila-pulsa { from { opacity: .35; } to { opacity: 1; } }
-.ranked-ladder h2, .ranked-profile h2 { margin: 0 0 8px; color: #747e88; font: 700 10px 'Barlow Condensed', sans-serif; letter-spacing: .16em; }
+.ranked-ladder h2 { margin: 0 0 8px; color: #747e88; font: 700 10px 'Barlow Condensed', sans-serif; letter-spacing: .16em; }
 .ranked-ladder ol { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
 .ranked-ladder li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 10px; border-left: 3px solid var(--tier); background: rgba(7,11,17,.6); font: 600 13px 'Barlow Condensed', sans-serif; }
 .ranked-ladder li.me { background: color-mix(in srgb, var(--tier) 12%, rgba(7,11,17,.6)); }
@@ -349,13 +216,6 @@ button { cursor: pointer; }
 .ranked-ladder span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ranked-ladder em { margin-left: 8px; padding: 1px 6px; background: var(--tier-mestre); color: #16091f; font: 800 9px 'Barlow Condensed', sans-serif; font-style: normal; letter-spacing: .12em; }
 .ranked-ladder i { color: #cfd6dd; font-style: normal; font-variant-numeric: tabular-nums; }
-.ranked-profile { display: grid; gap: 8px; }
-.ranked-profile .text-button { margin: 0; text-align: left; }
-.ranked-code { overflow-wrap: anywhere; padding: 8px 10px; border: 1px dashed #3a444e; color: #ffc630; font: 600 11px monospace; }
-.ranked-mode { grid-column: 1 / -1; border-color: rgba(200,107,255,.32); background: linear-gradient(145deg, rgba(200,107,255,.08), rgba(7,11,17,.72) 55%); }
-.ranked-mode .mode-heading > span { border-color: rgba(200,107,255,.5); color: #c86bff; }
-.ranked-mode .mode-copy { min-height: 0; margin: 10px 0 6px; }
-.ranked-mode .solo-button:disabled { opacity: .45; cursor: not-allowed; }
 .ranked-result { display: grid; gap: 10px; margin: 18px 0 8px; text-align: left; }
 .ranked-delta { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid rgba(255,255,255,.1); background: rgba(7,11,17,.6); }
 .ranked-delta strong { font: 900 italic 30px/1 'Barlow Condensed', sans-serif; }
@@ -620,19 +480,6 @@ button { cursor: pointer; }
   .touch-controls .steer, .touch-controls .boost-button, .touch-controls .brake-button, .touch-controls .borboleta { opacity: .36; }
 }
 
-@media (max-width: 1100px) {
-  .menu-content { grid-template-columns: 1fr; width: min(760px, calc(100% - 48px)); min-height: 0; padding-block: 54px 70px; }
-  .menu-hero { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: end; }
-  .hero-heading { grid-column: 1 / -1; }
-  .hero-heading h1 { font-size: clamp(74px, 11vw, 104px); }
-  .hero-car { margin: 0; }
-  .race-facts { align-self: stretch; grid-template-columns: 1fr; }
-  .race-facts div { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-  .race-facts div + div { border-left: 0; border-top: 1px solid rgba(255,255,255,.09); }
-  .race-facts dt { margin: 0; }
-  .menu-footer { position: relative; }
-}
-
 @media (max-width: 900px), (pointer: coarse) {
   .keyboard-hint { display: none; }
   .boost-meter { right: max(22px, env(safe-area-inset-right)); bottom: 126px; width: 125px; }
@@ -642,39 +489,7 @@ button { cursor: pointer; }
 
 @media (max-width: 600px) {
   .driver-list { grid-template-columns: 1fr; }
-  .site-header { min-height: 70px; padding: 12px 19px; }
-  .menu-screen::after { top: 70px; }
-  .header-meta { gap: 12px; }
-  .institutional-mark span, .build-tag { display: none; }
-  .institutional-mark img { width: 46px; height: 40px; }
-  .menu-content { width: calc(100% - 32px); gap: 34px; padding: 38px 0 42px; }
-  .menu-hero { display: block; }
-  .hero-heading h1 { font-size: clamp(62px, 20vw, 92px); }
-  .hero-copy { font-size: 13px; }
-  .hero-car { min-height: 164px; margin: 24px 0 16px; padding: 17px; }
-  .hero-car img { right: 9%; width: 47%; height: 178px; }
-  .hero-car-number { right: 30%; font-size: 125px; }
-  .hero-car-caption strong { max-width: 150px; font-size: 21px; }
-  .race-facts { grid-template-columns: repeat(3, 1fr); }
-  .race-facts div { display: block; padding-inline: 7px; }
-  .race-facts div + div { border-top: 0; border-left: 1px solid rgba(255,255,255,.09); }
-  .race-facts dd { font-size: 10px; }
-  .start-panel { padding: 22px 16px; }
-  .start-panel-header { grid-template-columns: auto 1fr; }
-  .server-status { grid-column: 2; margin-top: -4px; }
-  .mode-list { grid-template-columns: 1fr; }
-  .daily-mode { grid-template-columns: 1fr; }
-  .daily-mode .mode-copy, .daily-mode .medal-ladder, .daily-mode .daily-record, .daily-mode .solo-button { grid-column: 1; grid-row: auto; }
-  .daily-mode .medal-ladder { margin-top: 12px; }
-  .weekly-list li { grid-template-columns: minmax(0, 1fr) 32px; }
-  .weekly-times { grid-column: 1; justify-items: start; }
-  .weekly-list button { grid-column: 2; grid-row: 1 / span 2; }
   .resumo-da-prova { grid-template-columns: 1fr; }
-  .ranked-header { flex-direction: column; }
-  .ranked-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ranked-stats div:nth-child(3) { border-left: 0; }
-  .mode-copy { min-height: 0; }
-  .menu-footer { flex-direction: column; gap: 8px; padding: 14px 19px; }
   .topbar { padding: 14px max(16px, env(safe-area-inset-right)) 14px max(16px, env(safe-area-inset-left)); }
   /* Com a barra cheia — corrida online, plateia, arquibancada —, o nome do
      jogo sai e fica a marca: ABANDONAR e o piloto voltam para a tela. */
@@ -778,12 +593,18 @@ button { cursor: pointer; }
 .difficulty-picker button:hover:not(:disabled) { border-color: #4a545f; color: #cfd6dd; }
 .difficulty-picker button.on { border-color: var(--orange); color: #fff; background: rgba(255,75,43,.14); }
 .difficulty-picker button:disabled { opacity: .4; cursor: not-allowed; }
-.difficulty-note { margin: 9px 0 0; color: #7f8a95; font: 600 11px 'Barlow Condensed', sans-serif; letter-spacing: .08em; }
 
 .lobby-difficulty { margin: 0 0 18px; }
 .lobby-difficulty > span { display: block; color: rgba(255,255,255,.57); font: 700 9px 'Barlow Condensed', sans-serif; letter-spacing: .18em; }
 .lobby-difficulty .difficulty-picker { margin-top: 9px; }
 .lobby-difficulty em { display: block; margin-top: 9px; color: #7f8a95; font: 600 11px 'Barlow Condensed', sans-serif; font-style: normal; letter-spacing: .08em; }
+/* As regras da sala — nível e câmbio — lado a lado onde cabem: o lobby de seis
+   continua inteiro em 1366 × 768. */
+.lobby-regras { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 0 22px; margin: 0 0 18px; }
+.lobby-regras .lobby-difficulty { margin: 0; }
+@container pilotos (max-width: 559px) {
+  .lobby-regras { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+}
 
 /* Etiqueta do nível no HUD da corrida. */
 .difficulty-tag { display: block; margin-top: 3px; color: var(--amber); font: 700 9px 'Barlow Condensed', sans-serif; font-style: normal; letter-spacing: .16em; }
@@ -847,20 +668,11 @@ button { cursor: pointer; }
 .garage-card.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, rgba(7,11,17,.92)); }
 .garage-card.on::after { content: ''; position: absolute; left: -1px; right: -1px; bottom: -1px; height: 3px; background: var(--accent); box-shadow: 0 0 14px var(--accent); }
 .garage-rival { position: absolute; top: -8px; right: 8px; padding: 2px 6px; background: #43e7ff; color: #06131a; font: 800 8px 'Barlow Condensed', sans-serif; font-style: normal; letter-spacing: .14em; }
-.garage-card:focus-visible, .garage-arrow:focus-visible, .garage-skins button:focus-visible, .car-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.garage-card:focus-visible, .garage-arrow:focus-visible, .garage-skins button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .garage-actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .garage-actions .text-button { margin: 0; }
 .garage-actions .primary-button { min-width: min(340px, 100%); }
-
-/* Carro escolhido, no formulário do menu: leva à garagem. */
-.car-choice { --accent: var(--orange); display: grid; grid-template-columns: 50px 1fr auto; gap: 14px; align-items: center; width: 100%; margin-top: 10px; padding: 8px 18px 8px 10px; border: 1px solid #2a323c; border-left: 3px solid var(--accent); border-radius: 2px; background: rgba(7,11,17,.84); color: #fff; text-align: left; transition: border-color .18s, background .18s; }
-.car-choice:hover { border-color: #4a545f; border-left-color: var(--accent); background: rgba(16,22,30,.9); }
-.car-choice img { width: 50px; height: 55px; object-fit: contain; }
-.car-choice small { display: block; color: #7c8690; font: 700 9px 'Barlow Condensed', sans-serif; letter-spacing: .18em; }
-.car-choice strong { display: block; font: 800 19px/1.1 'Barlow Condensed', sans-serif; letter-spacing: .04em; text-transform: uppercase; }
-.car-choice em { color: var(--accent); font: 700 10px 'Barlow Condensed', sans-serif; font-style: normal; letter-spacing: .14em; text-transform: uppercase; }
-.car-choice-action { color: #cfd6dd; font: 800 11px 'Barlow Condensed', sans-serif; letter-spacing: .13em; white-space: nowrap; }
 
 /* Carro de cada piloto no lobby e no placar. */
 .driver-slot { grid-template-columns: 44px 40px 1fr auto auto; }
@@ -923,7 +735,6 @@ button { cursor: pointer; }
   .pace-note, .pace-note.close .pace-arrows { animation: none; }
   .carga-meter.nivel-3 .carga-degraus i.on { animation: none; }
   .parcial-flash { animation: radio-some 2.6s steps(1, end) forwards; }
-  .ranked-searching i { animation: none; }
   .garage-card:hover { transform: none; }
 }
 
@@ -951,7 +762,6 @@ button { cursor: pointer; }
   .garage-info { padding: 18px 18px 16px; }
   .garage-actions { flex-direction: column-reverse; align-items: stretch; }
   .garage-actions .text-button { margin: 4px auto 0; }
-  .car-choice { padding-right: 12px; }
   .driver-slot { grid-template-columns: 30px 34px 1fr auto; gap: 10px; }
   .driver-slot > b { font-size: 24px; }
   .slot-car { width: 34px; height: 38px; }
@@ -978,27 +788,9 @@ button { cursor: pointer; }
   @keyframes radio-some { 0%, 99% { opacity: 1; } 100% { opacity: 0; } }
 }
 
-/* Conta no cabeçalho do menu: o nome leva ao perfil; o convidado vê onde entrar. */
-.conta-chip { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 6px 12px; border: 1px solid #303944; background: rgba(7,11,17,.7); color: #cfd6dd; text-align: left; font: 800 12px 'Barlow Condensed', sans-serif; letter-spacing: .1em; text-transform: uppercase; }
-.conta-chip span { display: grid; gap: 1px; max-width: 170px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.conta-chip small { color: #6f7882; font: 700 8px 'Barlow Condensed', sans-serif; letter-spacing: .16em; }
-.conta-chip i { width: 8px; height: 8px; flex: none; border-radius: 50%; background: #45e7ad; box-shadow: 0 0 9px #45e7ad; }
-.conta-chip.on { border-color: rgba(69,231,173,.35); color: #fff; }
-button.conta-chip:hover { border-color: var(--orange); color: #fff; }
-.identity-conta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; margin: 0; color: #7c8690; font: 700 10px 'Barlow Condensed', sans-serif; letter-spacing: .18em; }
-.identity-conta b { color: #fff; font-size: 18px; letter-spacing: .06em; }
-.identity-conta .text-button { margin: 0 0 0 auto; color: #ffc630; }
-.daily-note { margin: 8px 0 0; color: #6f7882; font: 700 8px 'Barlow Condensed', sans-serif; letter-spacing: .14em; }
-.daily-mode .daily-note { grid-column: 1; }
 .text-button.inline { display: inline; margin: 0; padding: 0; color: #ffc630; }
 
-/* Ranking mundial no menu: verde-água, a cor da medalha de piloto — o topo. */
-.world-mode { grid-column: 1 / -1; border-color: rgba(69,231,173,.28); background: linear-gradient(145deg, rgba(69,231,173,.07), rgba(7,11,17,.72) 55%); }
-.world-mode .mode-heading > span { border-color: rgba(69,231,173,.5); color: #45e7ad; }
-.world-mode .mode-copy { min-height: 0; margin: 10px 0 0; }
-.world-board li.me, .ranking-quadro li.me { border-color: rgba(69,231,173,.45); background: rgba(69,231,173,.07); }
-.world-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.world-actions .solo-button:disabled { opacity: .45; cursor: not-allowed; }
+.ranking-quadro li.me { border-color: rgba(69,231,173,.45); background: rgba(69,231,173,.07); }
 
 /* A porta de entrada: entrar, criar a conta ou correr como convidado. */
 .entrada-screen, .perfil-screen, .ranking-screen { display: grid; place-items: center; padding: 24px 16px; }
@@ -1097,17 +889,7 @@ button.conta-chip:hover { border-color: var(--orange); color: #fff; }
 .ranking-vazio { padding: 14px; border: 1px dashed #2a323c; text-align: center; }
 .ranking-card .primary-button { width: 100%; }
 
-/* Ranqueada: o convidado vê o que ganha com a conta; o piloto, os atalhos. */
-.ranked-convidado { display: grid; gap: 12px; padding: 14px; border: 1px solid rgba(200,107,255,.35); background: rgba(200,107,255,.06); }
-.ranked-convidado .primary-button { width: 100%; }
-.ranked-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 22px; }
-.ranked-links .text-button { margin: 0; color: #ffc630; }
-.ranked-online { color: #45e7ad; font-weight: 800; }
-
 @media (max-width: 600px) {
-  .conta-chip { min-height: 38px; padding: 5px 9px; font-size: 11px; }
-  .conta-chip span { max-width: 118px; }
-  .world-actions { grid-template-columns: 1fr; }
   .perfil-header, .ranking-header { flex-direction: column; }
   .ranking-header .text-button { position: absolute; top: 18px; right: 16px; }
   .ranking-header .eyebrow { padding-right: 64px; }
@@ -1137,6 +919,8 @@ button.conta-chip:hover { border-color: var(--orange); color: #fff; }
 /* O modo do câmbio é um botão no meio de um HUD que não recebe toque. */
 .modo-do-cambio { pointer-events: auto; margin-top: 6px; padding: 2px 6px; border: 1px solid rgba(255,255,255,.25); background: rgba(8,12,17,.6); color: #8d959d; font: 800 8px 'Barlow Condensed', sans-serif; letter-spacing: .14em; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .modo-do-cambio.manual { border-color: rgba(200,107,255,.6); color: #e2b8ff; }
+/* Na sala de câmbio manual — a ranqueada — o modo é a regra, e não um botão. */
+.modo-do-cambio.obrigatorio { background: rgba(200,107,255,.24); color: #fff; cursor: help; }
 @media (hover: hover) {
   .modo-do-cambio:hover { border-color: #c86bff; color: #fff; }
 }

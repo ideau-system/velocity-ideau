@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { CONTAGEM_DO_CONTRARRELOGIO_MS, diaDe, DIFICULDADE_OFICIAL, sementeDoDia, tempoDoPiloto } from '../src/game/contrarrelogio.js'
 import { correrSemTela } from '../src/game/corridaSimulada.js'
 import { desafiosDaSemana, regrasDo, semanaDe } from '../src/game/desafios.js'
-import { GravadorDeVolta, type GravacaoDeVolta } from '../src/game/gravador.js'
+import { duracaoDaGravacao, GravadorDeVolta, type GravacaoDeVolta } from '../src/game/gravador.js'
 import { desviando, pilotoCompleto, type Piloto } from '../src/game/piloto.js'
 import { GravadorDeEntradas, quantizarPasso } from '../src/game/registroDeEntradas.js'
 import type { RaceInput } from '../src/game/simulation.js'
@@ -63,13 +63,17 @@ describe('julgamento da volta', () => {
 
   it('a volta gravada precisa bater com o tempo e chegar à linha', () => {
     expect(julgar(VOLTA.tempo - 3, VOLTA.gravacao, VOLTA.tempo - 2.8).estado).toBe('recusado')
+    // Sem nenhuma das amostras da linha: a volta pode fechar bem num tique da
+    // gravação, e aí a linha aparece nas duas últimas.
+    const naLinha = VOLTA.gravacao.progresso.findIndex((progresso) => progresso >= TRACK_LENGTH * 10)
     const curta = {
       ...VOLTA.gravacao,
-      progresso: VOLTA.gravacao.progresso.slice(0, -1),
-      lateral: VOLTA.gravacao.lateral.slice(0, -1),
-      velocidade: VOLTA.gravacao.velocidade.slice(0, -1),
+      progresso: VOLTA.gravacao.progresso.slice(0, naLinha),
+      lateral: VOLTA.gravacao.lateral.slice(0, naLinha),
+      velocidade: VOLTA.gravacao.velocidade.slice(0, naLinha),
     }
-    expect(julgar(VOLTA.tempo - 0.1, curta, VOLTA.tempo).estado).toBe('recusado')
+    const tempoDaCurta = duracaoDaGravacao(curta)
+    expect(julgar(tempoDaCurta, curta, tempoDaCurta + 0.1)).toEqual({ estado: 'recusado', motivo: 'a volta gravada não chega à linha' })
     expect(julgar(VOLTA.tempo, { lixo: true }, VOLTA.tempo).estado).toBe('recusado')
   })
 

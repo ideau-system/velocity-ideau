@@ -4,11 +4,12 @@ import { carById } from '../game/cars'
 import { carImageUrl } from '../game/carSprites'
 import { countdownAt } from '../game/countdown'
 import { MusicaDoLobby } from '../game/musicaDoLobby'
+import { definirCambio, lerCambio, type Cambio } from '../game/preferenciasDeCambio'
 import { definirMusicaDesligada, lerMusicaDesligada, lerSomDesligado } from '../game/preferenciasDeSom'
 import { DIFFICULTIES, DIFFICULTY_LABELS, DIFFICULTY_NOTES, type Difficulty } from '../game/rules'
 import { serverClock, type ClockState } from './clock'
 import { socket } from './socket'
-import type { LobbyRoom, RoomResponse } from './types'
+import { regraDoCambio, type LobbyRoom, type RoomResponse } from './types'
 
 /** Vagas do grid. O servidor recusa o sétimo. */
 const VAGAS_DO_GRID = 6
@@ -63,6 +64,9 @@ function Lobby({
   /** Piloto que o anfitrião está prestes a tirar: o primeiro toque só pergunta. */
   const [tirando, setTirando] = useState<string | null>(null)
   const [semMusica, setSemMusica] = useState(() => lerMusicaDesligada() || lerSomDesligado())
+  /** O câmbio deste piloto, quando a sala deixa escolher. É a mesma preferência da corrida. */
+  const [cambio, setCambio] = useState<Cambio>(lerCambio)
+  const cambioLivre = regraDoCambio(room) === 'livre'
   const musicaRef = useRef<MusicaDoLobby | null>(null)
 
   const prontos = room.players.filter((player) => player.ready).length
@@ -94,6 +98,11 @@ function Lobby({
       musicaRef.current = null
     }
   }, [])
+
+  const escolherCambio = (escolhido: Cambio) => {
+    definirCambio(escolhido)
+    setCambio(escolhido)
+  }
 
   const alternarMusica = () => {
     const desligar = !semMusica
@@ -328,26 +337,61 @@ function Lobby({
               </p>
             )}
 
-            <div className="lobby-difficulty">
-              <span>DIFICULDADE DA SALA</span>
-              <div className="difficulty-picker" role="group" aria-label="Dificuldade da sala">
-                {DIFFICULTIES.map((nivel) => (
-                  <button
-                    key={nivel}
-                    type="button"
-                    className={room.difficulty === nivel ? 'on' : ''}
-                    aria-pressed={room.difficulty === nivel}
-                    disabled={!souAnfitriao || room.status === 'countdown' || connection !== 'connected'}
-                    onClick={() => escolherDificuldade(nivel)}
-                  >
-                    {DIFFICULTY_LABELS[nivel]}
-                  </button>
-                ))}
+            {/* As regras da sala lado a lado: o nível, que o anfitrião escolhe, e o câmbio. */}
+            <div className="lobby-regras">
+              <div className="lobby-difficulty">
+                <span>DIFICULDADE DA SALA</span>
+                <div className="difficulty-picker" role="group" aria-label="Dificuldade da sala">
+                  {DIFFICULTIES.map((nivel) => (
+                    <button
+                      key={nivel}
+                      type="button"
+                      className={room.difficulty === nivel ? 'on' : ''}
+                      aria-pressed={room.difficulty === nivel}
+                      disabled={!souAnfitriao || room.status === 'countdown' || connection !== 'connected'}
+                      onClick={() => escolherDificuldade(nivel)}
+                    >
+                      {DIFFICULTY_LABELS[nivel]}
+                    </button>
+                  ))}
+                </div>
+                <em>
+                  {DIFFICULTY_NOTES[room.difficulty]}
+                  {!souAnfitriao && ' Quem criou a sala escolhe.'}
+                </em>
               </div>
-              <em>
-                {DIFFICULTY_NOTES[room.difficulty]}
-                {!souAnfitriao && ' Quem criou a sala escolhe.'}
-              </em>
+
+              {/* O câmbio é regra da sala: livre aqui — cada piloto escolhe o seu —,
+                  manual na ranqueada. */}
+              <div className="lobby-difficulty lobby-cambio">
+                <span>CÂMBIO DA SALA · {cambioLivre ? 'LIVRE' : 'MANUAL OBRIGATÓRIO'}</span>
+                {cambioLivre && !espectador && (
+                  <div className="difficulty-picker" role="radiogroup" aria-label="O seu câmbio">
+                    {(['automatico', 'manual'] as const).map((tipo) => (
+                      <button
+                        key={tipo}
+                        type="button"
+                        role="radio"
+                        className={cambio === tipo ? 'on' : ''}
+                        aria-checked={cambio === tipo}
+                        disabled={room.status === 'countdown'}
+                        onClick={() => escolherCambio(tipo)}
+                      >
+                        {tipo === 'manual' ? 'MANUAL' : 'AUTOMÁTICO'}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <em>
+                  {!cambioLivre
+                    ? 'Todos trocam as marchas: E sobe e Q reduz, ou ▲ ▼ no toque.'
+                    : espectador
+                      ? 'Cada piloto escolhe o seu: manual ou automático.'
+                      : cambio === 'manual'
+                        ? 'Você troca as marchas: E sobe, Q reduz. A troca perfeita rende turbo.'
+                        : 'As marchas trocam sozinhas. Cada piloto escolhe o seu.'}
+                </em>
+              </div>
             </div>
 
             {espectador && !(room.status === 'countdown' && remaining !== null) ? (

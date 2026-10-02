@@ -66,3 +66,10 @@ export async function sairDaCopa(socket: Socket) {
 
 /** Ouro, prata e bronze da divisão. */
 export const TACA: Record<number, string> = { 1: 'CAMPEÃO', 2: 'VICE', 3: 'TERCEIRO' }
+
+/** A fase da copa agora, pelo relógio do servidor: as viradas marcadas não esperam a releitura. */
+export function faseNoRelogio(copa: SituacaoDaCopa, agora: number): FaseDaCopa {
+  if (copa.fase === 'inscricoes' && agora >= copa.abertura) return agora >= copa.fechamento ? 'apuracao' : 'classificacao'
+  if (copa.fase === 'classificacao' && agora >= copa.fechamento) return 'apuracao'
+  return copa.fase
+}

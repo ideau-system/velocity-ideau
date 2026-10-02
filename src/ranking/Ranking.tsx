@@ -1,4 +1,5 @@
 import { CIRCUITO_OFICIAL, MEDALHAS, NOME_DA_MEDALHA } from '../game/contrarrelogio'
+import { DIFFICULTY_LABELS } from '../game/rules'
 import { formatTime } from '../game/track'
 import type { LinhaDoQuadro, QuadroDoDia } from '../multiplayer/pistaDoDia'
 import type { LinhaDaEscada } from '../multiplayer/ranqueada'
@@ -89,8 +90,8 @@ export default function Ranking({
           <>
             <p className="ranking-sobre">
               {aba === 'mundial'
-                ? `${CIRCUITO_OFICIAL.nome.toUpperCase()} · A MESMA PISTA PARA SEMPRE · NÍVEL DIFÍCIL · O MELHOR TEMPO DE CADA PILOTO`
-                : `PISTA DE ${quadro.dia.slice(8, 10)}/${quadro.dia.slice(5, 7)} · ZERA À MEIA-NOITE · NÍVEL DIFÍCIL`}
+                ? `${CIRCUITO_OFICIAL.nome.toUpperCase()} · A MESMA PISTA PARA SEMPRE · NÍVEL ${DIFFICULTY_LABELS[quadro.dificuldade]} · O MELHOR TEMPO DE CADA PILOTO`
+                : `PISTA DE ${quadro.dia.slice(8, 10)}/${quadro.dia.slice(5, 7)} · ZERA À MEIA-NOITE · NÍVEL ${DIFFICULTY_LABELS[quadro.dificuldade]}`}
             </p>
             <ol className="medal-ladder ranking-medalhas" aria-label="Medalhas">
               {MEDALHAS.map((medalha) => (
