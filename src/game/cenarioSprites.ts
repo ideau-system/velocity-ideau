@@ -136,6 +136,128 @@ const SOMBRA_NO_CHAO = 'rgba(10,20,26,.3)'
 const PORTICO = rampa('#98a2a8')
 const FAIXAS_DO_PORTICO = ['#cf4436', '#2f6f8f', '#e6b325'].map(rampa)
 
+/**
+ * Placas da IDEAU que o pórtico carrega, como os painéis de patrocínio sobre
+ * a reta das corridas de verdade.
+ *
+ * São três, nas cores do brasão, e cada pórtico pega uma pela variante — a
+ * reta alterna verde, branco e vermelho em vez de repetir a mesma placa.
+ */
+const IDEAU = { verde: '#11833f', amarelo: '#ffd400', vermelho: '#d8232a', branco: '#f6f6f0' }
+const PLACAS_IDEAU = [
+  { fundo: IDEAU.verde, nome: IDEAU.amarelo, linha: IDEAU.branco },
+  { fundo: IDEAU.branco, nome: IDEAU.verde, linha: IDEAU.vermelho },
+  { fundo: IDEAU.vermelho, nome: IDEAU.branco, linha: IDEAU.amarelo },
+]
+
+/**
+ * Tamanho da placa assada. A proporção é a do painel no pórtico; a altura é a
+ * do painel de um pórtico colado na câmera num celular deitado, para a marca
+ * não borrar justo quando ela passa por cima do carro.
+ */
+const PLACA_LARGURA = 1536
+const PLACA_ALTURA = 144
+const MARCAS_POR_PLACA = 3
+
+/** Placas prontas, ou `null` enquanto o brasão e a fonte não chegaram. */
+let placas: HTMLCanvasElement[] | null = null
+let placasPedidas = false
+
+/**
+ * Busca o brasão e assa as placas.
+ *
+ * A imagem chega depois da primeira chamada; até lá o pórtico mostra a faixa
+ * lisa de antes, e na contagem de largada as placas já estão no lugar.
+ */
+function pedirPlacas() {
+  if (placasPedidas) return
+  placasPedidas = true
+  const imagem = new Image()
+  imagem.onload = () => {
+    const fonte = document.fonts?.load("italic 900 96px 'Barlow Condensed'") ?? Promise.resolve()
+    void fonte.catch(() => undefined).then(() => {
+      const brasao = recortarBrasao(imagem)
+      placas = PLACAS_IDEAU.map((cores) => assarPlaca(brasao, cores))
+    })
+  }
+  imagem.src = '/iedau.jpeg'
+}
+
+/**
+ * Tira o fundo branco do brasão.
+ *
+ * O arquivo é um JPEG sem transparência. Apagar todo pixel claro levaria
+ * junto o livro e as letras da faixa, então o apagamento anda só a partir das
+ * bordas, pelo branco que encosta nelas.
+ */
+function recortarBrasao(imagem: HTMLImageElement): HTMLCanvasElement {
+  const tela = document.createElement('canvas')
+  tela.width = imagem.naturalWidth
+  tela.height = imagem.naturalHeight
+  const ctx = tela.getContext('2d')!
+  ctx.drawImage(imagem, 0, 0)
+  const { width: w, height: h } = tela
+  const dados = ctx.getImageData(0, 0, w, h)
+  const px = dados.data
+  const claro = (i: number) => Math.min(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]) > 222
+  const visto = new Uint8Array(w * h)
+  const fila: number[] = []
+  for (let x = 0; x < w; x += 1) fila.push(x, (h - 1) * w + x)
+  for (let y = 0; y < h; y += 1) fila.push(y * w, y * w + w - 1)
+  while (fila.length) {
+    const i = fila.pop()!
+    if (visto[i] || !claro(i)) continue
+    visto[i] = 1
+    px[i * 4 + 3] = 0
+    const x = i % w
+    if (x > 0) fila.push(i - 1)
+    if (x < w - 1) fila.push(i + 1)
+    if (i >= w) fila.push(i - w)
+    if (i < w * (h - 1)) fila.push(i + w)
+  }
+  ctx.putImageData(dados, 0, 0)
+  return tela
+}
+
+function assarPlaca(brasao: HTMLCanvasElement, cores: (typeof PLACAS_IDEAU)[number]): HTMLCanvasElement {
+  const tela = document.createElement('canvas')
+  tela.width = PLACA_LARGURA
+  tela.height = PLACA_ALTURA
+  const ctx = tela.getContext('2d')!
+  const H = PLACA_ALTURA
+  ctx.fillStyle = cores.fundo
+  ctx.fillRect(0, 0, PLACA_LARGURA, H)
+  // Frisos de cima e de baixo, na cor de destaque.
+  ctx.fillStyle = cores.linha
+  ctx.fillRect(0, 0, PLACA_LARGURA, H * 0.06)
+  ctx.fillRect(0, H * 0.94, PLACA_LARGURA, H * 0.06)
+
+  const vao = PLACA_LARGURA / MARCAS_POR_PLACA
+  const alturaBrasao = H * 0.8
+  const larguraBrasao = (alturaBrasao * brasao.width) / brasao.height
+  ctx.font = `italic 900 ${Math.round(H * 0.7)}px 'Barlow Condensed', 'Arial Black', sans-serif`
+  const larguraNome = ctx.measureText('IDEAU').width
+  const espaco = H * 0.14
+  const grupo = larguraBrasao + espaco + larguraNome
+  for (let i = 0; i < MARCAS_POR_PLACA; i += 1) {
+    const inicio = i * vao + (vao - grupo) / 2
+    ctx.drawImage(brasao, inicio, (H - alturaBrasao) / 2, larguraBrasao, alturaBrasao)
+    ctx.fillStyle = cores.nome
+    ctx.textBaseline = 'alphabetic'
+    ctx.fillText('IDEAU', inicio + larguraBrasao + espaco, H * 0.73)
+    ctx.font = `700 ${Math.round(H * 0.15)}px 'Barlow Condensed', 'Arial Narrow', sans-serif`
+    ctx.fillStyle = cores.linha === IDEAU.branco ? IDEAU.branco : cores.nome
+    ctx.fillText('F A C U L D A D E S', inicio + larguraBrasao + espaco + H * 0.02, H * 0.88)
+    ctx.font = `italic 900 ${Math.round(H * 0.7)}px 'Barlow Condensed', 'Arial Black', sans-serif`
+    // Divisória entre as marcas, como as emendas de lona de uma placa real.
+    if (i > 0) {
+      ctx.fillStyle = 'rgba(0,0,0,.18)'
+      ctx.fillRect(i * vao - 1, H * 0.06, 2, H * 0.88)
+    }
+  }
+  return tela
+}
+
 
 type Celula = {
   x: number
@@ -354,6 +476,7 @@ let atual: Folha | null = null
  */
 export function prepararCenario(flora: Flora, nevoaRGB: string) {
   atual = folhaDe(flora, nevoaRGB)
+  pedirPlacas()
 }
 
 /** Quanto de memória a folha da corrida ocupa, para medir sem adivinhar. */
@@ -727,7 +850,7 @@ export function desenharPortico(
   const base = projetado.y
   const arco = largura * 0.44
   const perna = Math.max(1, largura * 0.032)
-  const viga = Math.max(2, largura * 0.115)
+  const viga = Math.max(2, largura * 0.13)
   const meiaViga = largura * 0.63
 
   ctx.globalAlpha = nitidez
@@ -750,16 +873,30 @@ export function desenharPortico(
   ctx.fillStyle = PORTICO[0]
   ctx.fillRect(projetado.center - meiaViga, base - arco - Math.max(1, viga * 0.18), meiaViga * 2, Math.max(1, viga * 0.18))
 
-  // Painel: faixa de patrocínio, ou o quadriculado da chegada.
-  const painelTopo = base - arco - viga * 0.78
-  const painelAltura = Math.max(1, viga * 0.5)
+  // Painel: placa da IDEAU, ou o quadriculado da chegada.
+  const painelTopo = base - arco - viga * 0.91
+  const painelAltura = Math.max(1, viga * 0.82)
   if (chegada) {
-    const casas = 16
+    // Duas fileiras defasadas, com casas quase quadradas no painel mais alto.
+    const casas = 22
     const passo = (meiaViga * 2) / casas
-    for (let i = 0; i < casas; i += 1) {
-      ctx.fillStyle = i % 2 === 0 ? '#f3f3ed' : '#11151a'
-      ctx.fillRect(projetado.center - meiaViga + i * passo, painelTopo, passo + 1, painelAltura)
+    const meiaAltura = painelAltura / 2
+    for (let fileira = 0; fileira < 2; fileira += 1) {
+      for (let i = 0; i < casas; i += 1) {
+        ctx.fillStyle = (i + fileira) % 2 === 0 ? '#f3f3ed' : '#11151a'
+        ctx.fillRect(projetado.center - meiaViga + i * passo, painelTopo + fileira * meiaAltura, passo + 1, meiaAltura + 1)
+      }
     }
+  } else if (placas) {
+    const placa = placas[variante % placas.length]
+    const esquerda = projetado.center - meiaViga * 0.92
+    const larguraPainel = meiaViga * 1.84
+    ctx.drawImage(placa, esquerda, painelTopo, larguraPainel, painelAltura)
+    // Moldura escura: sem ela a placa clara se mistura com o céu.
+    ctx.fillStyle = PORTICO[0]
+    const borda = Math.max(1, painelAltura * 0.05)
+    ctx.fillRect(esquerda - borda, painelTopo - borda, borda, painelAltura + borda * 2)
+    ctx.fillRect(esquerda + larguraPainel, painelTopo - borda, borda, painelAltura + borda * 2)
   } else {
     const tinta = FAIXAS_DO_PORTICO[variante % FAIXAS_DO_PORTICO.length]
     ctx.fillStyle = tinta[2]
